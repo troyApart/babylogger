@@ -1,0 +1,19 @@
+#!/bin/bash -e
+
+set -e
+DOCKER_TAG=0.0.17
+
+REGION=us-west-2
+
+REPOSITORY_NAME="babylogger"
+REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPOSITORY_NAME}"
+
+echo "Building..."
+docker build \
+  -t $REPOSITORY_NAME \
+  .
+
+echo "Pushing to $REGISTRY:$DOCKER_TAG"
+docker tag $REPOSITORY_NAME $REGISTRY:$DOCKER_TAG
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+docker push $REGISTRY:$DOCKER_TAG

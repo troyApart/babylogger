@@ -1,0 +1,15 @@
+#!/bin/sh -e
+
+# Get repo root by sub-shelling and getting the parent directory of this script
+DIR=$( cd $(dirname $0)/.. && pwd )
+BUILDDIR=$DIR/build
+LAMBDA=babylogger
+mkdir -pv $BUILDDIR
+cd $DIR
+rm -rfv pkg
+
+echo "=> go build -v -o $BUILDDIR/$LAMBDA ."
+
+go build -v \
+    -o $BUILDDIR/$LAMBDA \
+    .
