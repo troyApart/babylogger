@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	LeftSide  = "left"
-	RightSide = "right"
-	// BottleSide        = "bottle"
+	LeftSide          = "left"
+	RightSide         = "right"
+	BottleSide        = "bottle"
 	LatestFeedRequest = "next"
 	NewFeedRequest    = "new"
 	UpdateFeedRequest = "update"
@@ -233,7 +233,7 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 	match := re.FindStringSubmatch(message)
 	index := re.SubexpIndex("side")
 	side := match[index]
-	if side != LeftSide && side != RightSide {
+	if side != LeftSide && side != RightSide && side != BottleSide {
 		return clientError(http.StatusBadRequest)
 	}
 
@@ -267,6 +267,14 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 		right = rightMatch[rightIndex]
 	}
 
+	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d+){0,1}.*`)
+	bottleMatch := bottleRE.FindStringSubmatch(message)
+	bottleIndex := bottleRE.SubexpIndex("bottle")
+	var bottle string
+	if len(bottleMatch) > 0 {
+		bottle = bottleMatch[bottleIndex]
+	}
+
 	i := &dynamodb.PutItemInput{
 		TableName: aws.String(b.config.FeedingTableName),
 		Item: map[string]*dynamodb.AttributeValue{
@@ -287,17 +295,26 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 	if right != "" {
 		i.Item["rightDuration"] = &dynamodb.AttributeValue{N: aws.String(right)}
 	}
+	if bottle != "" {
+		i.Item["bottleAmount"] = &dynamodb.AttributeValue{N: aws.String(bottle)}
+	}
 	o, err := b.dynamodb.PutItem(i)
 	if err != nil {
 		return serverError(err)
 	}
 	log.WithField("output", o).Info("dynamodb put succeeded")
 
+	var sideString string
+	if side == BottleSide {
+		sideString = fmt.Sprintf("using %s", side)
+	} else {
+		sideString = fmt.Sprintf("starting on %s side", side)
+	}
 	xmlResp := &Response{}
 	if twentyFourHourTime {
-		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s starting on %s side", current.In(loc).Format("Jan 2 15:04"), side)
+		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s %s", current.In(loc).Format("Jan 2 15:04"), sideString)
 	} else {
-		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s starting on %s side", current.In(loc).Format("Jan 2 03:04PM"), side)
+		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s %s", current.In(loc).Format("Jan 2 03:04PM"), sideString)
 	}
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
@@ -388,7 +405,16 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		exprBuilder.WithUpdate(expression.Set(expression.Name("rightDuration"), expression.Value(right)))
 	}
 
-	if left == "" && right == "" {
+	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d+){0,1}.*`)
+	bottleMatch := bottleRE.FindStringSubmatch(message)
+	bottleIndex := bottleRE.SubexpIndex("bottle")
+	var bottle string
+	if len(bottleMatch) > 0 {
+		bottle = bottleMatch[bottleIndex]
+		exprBuilder.WithUpdate(expression.Set(expression.Name("bottleAmount"), expression.Value(bottle)))
+	}
+
+	if left == "" && right == "" && bottle == "" {
 		return clientError(http.StatusBadRequest)
 	}
 
