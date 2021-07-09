@@ -107,6 +107,44 @@ func TestNewFeed(t *testing.T) {
 	fdb.AssertExpectations(t)
 }
 
+func TestUpdateFeed_Last(t *testing.T) {
+	outputDate := "2021-06-19"
+	outputTime := "18:32"
+	outputSide := "left"
+	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
+		{"date": &dynamodb.AttributeValue{S: aws.String(outputDate)}, "start": &dynamodb.AttributeValue{S: aws.String(outputTime)}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+	}}, nil).Once()
+	fdb.On("UpdateItem", mock.Anything).Return(&dynamodb.UpdateItemOutput{}, nil)
+	bl := BabyLogger{
+		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
+		dynamodb: fdb,
+	}
+
+	message := "update last left 10"
+	resp, err := bl.UpdateFeed(message)
+	assert.Nil(t, err)
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	assert.Nil(t, err)
+	previousTime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", outputDate, outputTime))
+	assert.Nil(t, err)
+	xmlResp := &Response{}
+	xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", previousTime.In(loc).Format("Jan 2 03:04PM"))
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusOK,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
 func TestNewFeed_DateAndTime(t *testing.T) {
 	d := "2010-01-01"
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -230,6 +268,52 @@ func TestNewFeed_LeftAndRight(t *testing.T) {
 	assert.Nil(t, err)
 	xmlResp := &Response{}
 	xmlResp.Message = fmt.Sprintf("New feeding recorded on %s starting on %s side", current.In(loc).Format("Jan 2 03:04PM"), "left")
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusCreated,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
+func TestDiaper(t *testing.T) {
+	current := time.Now().UTC()
+	fdb := &fakeDynamodb{}
+	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("diaper"), Item: map[string]*dynamodb.AttributeValue{
+		"date": {
+			S: aws.String(current.Format("2006-01-02")),
+		},
+		"time": {
+			S: aws.String(current.Format("15:04")),
+		},
+		"wet": {
+			BOOL: aws.Bool(true),
+		},
+		"soiled": {
+			BOOL: aws.Bool(true),
+		},
+		"checked": {
+			S: aws.String("pre-feed"),
+		},
+	}}).Return(&dynamodb.PutItemOutput{}, nil).Once()
+	bl := BabyLogger{
+		config:   &Config{DiaperTableName: "diaper"},
+		dynamodb: fdb,
+	}
+
+	message := "diaper wet soiled checked pre-feed"
+	resp, err := bl.NewDiaper(message)
+	assert.Nil(t, err)
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	assert.Nil(t, err)
+	xmlResp := &Response{}
+	xmlResp.Message = fmt.Sprintf("New diaper recorded on %s", current.In(loc).Format("Jan 2 03:04PM"))
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
