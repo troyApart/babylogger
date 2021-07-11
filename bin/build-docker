@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 set -e
-DOCKER_TAG=0.0.24
+DOCKER_TAG=0.0.37
 REGION=us-west-2
 
 REPOSITORY_NAME="babylogger"

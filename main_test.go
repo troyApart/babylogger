@@ -45,7 +45,7 @@ func TestNextFeed(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	resp, err := bl.NextFeed()
+	resp, err := bl.NextFeed("next")
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -54,6 +54,47 @@ func TestNextFeed(t *testing.T) {
 	assert.Nil(t, err)
 	xmlResp := &Response{}
 	xmlResp.Message = fmt.Sprintf("The next feeding is on your %s side on %s", RightSide, previousTime.Add(3*time.Hour).In(loc).Format("Jan 2 03:04PM"))
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusOK,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
+func TestNextFeed_Bottle(t *testing.T) {
+	outputDate := "2021-06-19"
+	outputTime := "18:32"
+	outputTimeIgnore := "14:21"
+	outputSideSkip := "bottle"
+	outputSide := "left"
+	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
+		{"date": &dynamodb.AttributeValue{S: aws.String(outputDate)}, "start": &dynamodb.AttributeValue{S: aws.String(outputTime)}, "side": &dynamodb.AttributeValue{S: aws.String(outputSideSkip)}},
+	}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
+		{"date": &dynamodb.AttributeValue{S: aws.String(outputDate)}, "start": &dynamodb.AttributeValue{S: aws.String(outputTimeIgnore)}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+	}}, nil).Once()
+	bl := BabyLogger{
+		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
+		dynamodb: fdb,
+	}
+
+	resp, err := bl.NextFeed("next 4h")
+	assert.Nil(t, err)
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	assert.Nil(t, err)
+	previousTime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", outputDate, outputTime))
+	assert.Nil(t, err)
+	xmlResp := &Response{}
+	xmlResp.Message = fmt.Sprintf("The next feeding is on your %s side on %s", RightSide, previousTime.Add(4*time.Hour).In(loc).Format("Jan 2 03:04PM"))
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
@@ -107,44 +148,6 @@ func TestNewFeed(t *testing.T) {
 	fdb.AssertExpectations(t)
 }
 
-func TestUpdateFeed_Last(t *testing.T) {
-	outputDate := "2021-06-19"
-	outputTime := "18:32"
-	outputSide := "left"
-	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{}, nil).Once()
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
-		{"date": &dynamodb.AttributeValue{S: aws.String(outputDate)}, "start": &dynamodb.AttributeValue{S: aws.String(outputTime)}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
-	}}, nil).Once()
-	fdb.On("UpdateItem", mock.Anything).Return(&dynamodb.UpdateItemOutput{}, nil)
-	bl := BabyLogger{
-		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
-		dynamodb: fdb,
-	}
-
-	message := "update last left 10"
-	resp, err := bl.UpdateFeed(message)
-	assert.Nil(t, err)
-
-	loc, err := time.LoadLocation("America/Los_Angeles")
-	assert.Nil(t, err)
-	previousTime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", outputDate, outputTime))
-	assert.Nil(t, err)
-	xmlResp := &Response{}
-	xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", previousTime.In(loc).Format("Jan 2 03:04PM"))
-	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
-	assert.Nil(t, err)
-	assert.Equal(t, events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
-		Body:       string(expectedBody),
-		Headers: map[string]string{
-			"content-type": "text/xml",
-		},
-	}, resp)
-
-	fdb.AssertExpectations(t)
-}
-
 func TestNewFeed_DateAndTime(t *testing.T) {
 	d := "2010-01-01"
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -168,7 +171,7 @@ func TestNewFeed_DateAndTime(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "new right date 2010-01-01 time 01:05 am"
+	message := "new right date 2010-01-01 time 1:05 am"
 	resp, err := bl.NewFeed(message)
 	assert.Nil(t, err)
 
@@ -272,6 +275,44 @@ func TestNewFeed_LeftAndRight(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
 		StatusCode: http.StatusCreated,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
+func TestUpdateFeed_Last(t *testing.T) {
+	outputDate := "2021-06-19"
+	outputTime := "18:32"
+	outputSide := "left"
+	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
+		{"date": &dynamodb.AttributeValue{S: aws.String(outputDate)}, "start": &dynamodb.AttributeValue{S: aws.String(outputTime)}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+	}}, nil).Once()
+	fdb.On("UpdateItem", mock.Anything).Return(&dynamodb.UpdateItemOutput{}, nil)
+	bl := BabyLogger{
+		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
+		dynamodb: fdb,
+	}
+
+	message := "update last left 10"
+	resp, err := bl.UpdateFeed(message)
+	assert.Nil(t, err)
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	assert.Nil(t, err)
+	previousTime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", outputDate, outputTime))
+	assert.Nil(t, err)
+	xmlResp := &Response{}
+	xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", previousTime.In(loc).Format("Jan 2 03:04PM"))
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusOK,
 		Body:       string(expectedBody),
 		Headers: map[string]string{
 			"content-type": "text/xml",
