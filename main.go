@@ -31,6 +31,7 @@ const (
 	NewDiaperRequest  = "diaper"
 	ListDiapers       = "list diapers"
 	ListFeeds         = "list feeds"
+	UserID            = int64(1)
 )
 
 type Config struct {
@@ -157,39 +158,35 @@ type Response struct {
 }
 
 type FeedingRecord struct {
-	Date  string `json:"date"`
-	Start string `json:"start"`
-	Side  string `json:"side"`
+	Timestamp int64  `json:"timestamp"`
+	Side      string `json:"side"`
 }
 
 type FullFeedingRecord struct {
-	Date          string `json:"date"`
-	Start         string `json:"start"`
-	Side          string `json:"side"`
-	LeftDuration  int64  `json:"leftDuration,omitempty"`
-	RightDuration int64  `json:"rightDuration,omitempty"`
-	BottleAmount  int64  `json:"bottleAmount,omitempty"`
+	Timestamp int64  `json:"timestamp"`
+	Side      string `json:"side"`
+	Left      int64  `json:"left,omitempty"`
+	Right     int64  `json:"right,omitempty"`
+	Bottle    int64  `json:"bottle,omitempty"`
 }
 
 type FullDiaperRecord struct {
-	Date    string `json:"date"`
-	Time    string `json:"time"`
-	Wet     bool   `json:"wet"`
-	Soiled  bool   `json:"soiled"`
-	Checked bool   `json:"checked,omitempty"`
+	Timestamp int64  `json:"timestamp"`
+	Wet       bool   `json:"wet"`
+	Soiled    bool   `json:"soiled"`
+	Checked   string `json:"checked,omitempty"`
 }
 
 func getLast(tableName string, db dynamodber, skipBottle bool) (*FeedingRecord, error) {
-	date := time.Now().UTC()
-	var lastDate, lastStart string
-	var cond *expression.ConditionBuilder
+	var lastTimestamp int64
+	var keyCond *expression.KeyConditionBuilder
 	for i := 1; i < 5; i++ {
 		builder := expression.NewBuilder()
-		if cond != nil {
-			builder.WithFilter(*cond)
+		key := expression.Key("userid").Equal(expression.Value(UserID))
+		if keyCond != nil {
+			key = expression.KeyAnd(key, *keyCond)
 		}
-		key := expression.KeyEqual(expression.Key("date"), expression.Value(date.Format("2006-01-02")))
-		proj := expression.NamesList(expression.Name("date"), expression.Name("start"), expression.Name("side"))
+		proj := expression.NamesList(expression.Name("timestamp"), expression.Name("side"))
 		expr, err := builder.WithKeyCondition(key).WithProjection(proj).Build()
 		if err != nil {
 			return nil, err
@@ -204,9 +201,6 @@ func getLast(tableName string, db dynamodber, skipBottle bool) (*FeedingRecord, 
 			ProjectionExpression:      expr.Projection(),
 			KeyConditionExpression:    expr.KeyCondition(),
 		}
-		if cond != nil {
-			qi.FilterExpression = expr.Filter()
-		}
 
 		o, err := db.Query(qi)
 		if err != nil {
@@ -215,9 +209,7 @@ func getLast(tableName string, db dynamodber, skipBottle bool) (*FeedingRecord, 
 		log.WithField("output", o.String()).Info("dynamodb query succeeded")
 
 		if len(o.Items) != 1 {
-			date = date.AddDate(0, 0, -1)
-			cond = nil
-			continue
+			return nil, err
 		}
 
 		var fr FeedingRecord
@@ -226,18 +218,15 @@ func getLast(tableName string, db dynamodber, skipBottle bool) (*FeedingRecord, 
 			return nil, err
 		}
 		if skipBottle && fr.Side == BottleSide {
-			fmt.Println("hello")
-			if lastStart == "" {
-				lastStart = fr.Start
-				lastDate = fr.Date
+			if lastTimestamp == 0 {
+				lastTimestamp = fr.Timestamp
 			}
-			newCond := expression.Name("start").LessThan(expression.Value(fr.Start))
-			cond = &newCond
+			newKeyCond := expression.Key("timestamp").LessThan(expression.Value(fr.Timestamp))
+			keyCond = &newKeyCond
 			continue
 		}
-		if skipBottle && lastStart != "" {
-			fr.Start = lastStart
-			fr.Date = lastDate
+		if skipBottle && lastTimestamp != 0 {
+			fr.Timestamp = lastTimestamp
 		}
 		return &fr, nil
 	}
@@ -251,28 +240,23 @@ func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, e
 		return serverError(err)
 	}
 
-	loc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		return serverError(err)
-	}
-	previousTime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", fr.Date, fr.Start))
-	if err != nil {
-		return serverError(err)
-	}
-
 	var timeInterval time.Duration
 	intervalRE := regexp.MustCompile(`^next (?P<interval>\d+){0,1}.*`)
 	intervalMatch := intervalRE.FindStringSubmatch(message)
 	intervalIndex := intervalRE.SubexpIndex("interval")
 	var interval string
 	if len(intervalMatch) > 0 {
-
 		interval = fmt.Sprintf("%sh", intervalMatch[intervalIndex])
-		fmt.Println(interval)
 		timeInterval, _ = time.ParseDuration(interval)
 	}
 	if timeInterval.Hours() == 0 {
 		timeInterval = b.config.FeedingInterval
+	}
+
+	previousTime := time.Unix(fr.Timestamp, 0)
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		return serverError(err)
 	}
 
 	xmlResp := &Response{}
@@ -301,80 +285,20 @@ func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, e
 	}, nil
 }
 
-// func getAllFeedings(tableName string, db dynamodber, date string) ([]FullFeedingRecord, error) {
-// 	builder := expression.NewBuilder()
-// 	key := expression.KeyEqual(expression.Key("date"), expression.Value(date))
-// 	proj := expression.NamesList(
-// 		expression.Name("date"),
-// 		expression.Name("start"),
-// 		expression.Name("side"),
-// 		expression.Name("leftDuration"),
-// 		expression.Name("rightDuration"),
-// 		expression.Name("bottleAmount"))
-// 	expr, err := builder.WithKeyCondition(key).WithProjection(proj).Build()
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func getAllForDay(tableName string, db dynamodber, dt *Datetime, proj expression.ProjectionBuilder, output interface{}) error {
+	dayStart, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s 00:00", dt.date), dt.loc)
+	if err != nil {
+		return err
+	}
+	dayEnd, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s 23:59", dt.date), dt.loc)
+	if err != nil {
+		return err
+	}
+	dayStartTimestamp := dayStart.UTC().Unix()
+	dayEndTimestamp := dayEnd.UTC().Unix()
 
-// 	qi := &dynamodb.QueryInput{
-// 		TableName:                 aws.String(tableName),
-// 		ExpressionAttributeNames:  expr.Names(),
-// 		ExpressionAttributeValues: expr.Values(),
-// 		ProjectionExpression:      expr.Projection(),
-// 		KeyConditionExpression:    expr.KeyCondition(),
-// 	}
-
-// 	o, err := db.Query(qi)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	log.WithField("output", o.String()).Info("dynamodb query succeeded")
-
-// 	ffr := make([]FullFeedingRecord, 0, len(o.Items))
-
-// 	err = dynamodbattribute.UnmarshalListOfMaps(o.Items, &ffr)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return ffr, nil
-// }
-
-// func getAllDiapers(tableName string, db dynamodber, date string) ([]FullDiaperRecord, error) {
-// 	builder := expression.NewBuilder()
-// 	key := expression.KeyEqual(expression.Key("date"), expression.Value(date))
-// 	proj := expression.NamesList(expression.Name("date"), expression.Name("time"), expression.Name("wet"), expression.Name("soiled"))
-// 	expr, err := builder.WithKeyCondition(key).WithProjection(proj).Build()
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	qi := &dynamodb.QueryInput{
-// 		TableName:                 aws.String(tableName),
-// 		ExpressionAttributeNames:  expr.Names(),
-// 		ExpressionAttributeValues: expr.Values(),
-// 		ProjectionExpression:      expr.Projection(),
-// 		KeyConditionExpression:    expr.KeyCondition(),
-// 	}
-
-// 	o, err := db.Query(qi)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	log.WithField("output", o.String()).Info("dynamodb query succeeded")
-
-// 	fdr := make([]FullDiaperRecord, 0, len(o.Items))
-
-// 	err = dynamodbattribute.UnmarshalListOfMaps(o.Items, &fdr)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return fdr, nil
-// }
-
-func getAllForDay(tableName string, db dynamodber, date string, proj expression.ProjectionBuilder, output interface{}) error {
-	key := expression.KeyEqual(expression.Key("date"), expression.Value(date))
+	key := expression.KeyEqual(expression.Key("userid"), expression.Value(UserID))
+	key = expression.KeyAnd(key, expression.Key("timestamp").Between(expression.Value(dayStartTimestamp), expression.Value(dayEndTimestamp)))
 	expr, err := expression.NewBuilder().WithKeyCondition(key).WithProjection(proj).Build()
 	if err != nil {
 		return err
@@ -403,48 +327,36 @@ func getAllForDay(tableName string, db dynamodber, date string, proj expression.
 }
 
 func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, error) {
-	current := time.Now().UTC()
-	loc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		return serverError(err)
-	}
-
-	d, _, err := getDate(message, current)
+	dt, err := getDatetime(message)
 	if err != nil {
 		return serverError(err)
 	}
 
 	proj := expression.NamesList(
-		expression.Name("date"),
-		expression.Name("start"),
+		expression.Name("timestamp"),
 		expression.Name("side"),
-		expression.Name("leftDuration"),
-		expression.Name("rightDuration"),
-		expression.Name("bottleAmount"))
+		expression.Name("left"),
+		expression.Name("right"),
+		expression.Name("bottle"))
 	ffr := make([]FullFeedingRecord, 0)
-	err = getAllForDay(b.config.FeedingTableName, b.dynamodb, d, proj, &ffr)
-	// ffr, err := getAllFeedings(b.config.FeedingTableName, b.dynamodb, d)
+	err = getAllForDay(b.config.FeedingTableName, b.dynamodb, dt, proj, &ffr)
 	if err != nil {
 		return serverError(err)
 	}
-
-	dateD, err := time.ParseInLocation("2006-01-02", d, loc)
-	if err != nil {
-		return serverError(err)
-	}
-	dateStringD := dateD.Format("2006-01-02")
 
 	xmlResp := &Response{}
-	xmlResp.Message = fmt.Sprintf("Feedings on %s", dateStringD)
+	xmlResp.Message = fmt.Sprintf("Feedings on %s", dt.datetime.In(dt.loc).Format("2006-01-02"))
 	var left, right, bottle int64
 	for _, record := range ffr {
+		timeInLoc := time.Unix(record.Timestamp, 0).In(dt.loc).Format("15:04")
+		xmlResp.Message = fmt.Sprintf("%s\n%s -", xmlResp.Message, timeInLoc)
 		if record.Side == BottleSide {
-			xmlResp.Message = fmt.Sprintf("%s\n%s - %s %doz", xmlResp.Message, record.Start, record.Side, record.BottleAmount)
-			bottle += record.BottleAmount
+			xmlResp.Message = fmt.Sprintf("%s %s %doz", xmlResp.Message, record.Side, record.Bottle)
+			bottle += record.Bottle
 		} else {
-			xmlResp.Message = fmt.Sprintf("%s\n%s - %s %dmin %dmin", xmlResp.Message, record.Start, record.Side, record.LeftDuration, record.RightDuration)
-			left += record.LeftDuration
-			right += record.RightDuration
+			xmlResp.Message = fmt.Sprintf("%s %s %dmin %dmin", xmlResp.Message, record.Side, record.Left, record.Right)
+			left += record.Left
+			right += record.Right
 		}
 	}
 	xmlResp.Message = fmt.Sprintf("%s\nLeft: %dmin, Right: %dmin, Bottle: %doz", xmlResp.Message, left, right, bottle)
@@ -464,36 +376,24 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 }
 
 func (b *BabyLogger) ListDiapers(message string) (events.APIGatewayProxyResponse, error) {
-	current := time.Now().UTC()
-	loc, err := time.LoadLocation("America/Los_Angeles")
+	dt, err := getDatetime(message)
 	if err != nil {
 		return serverError(err)
 	}
 
-	d, _, err := getDate(message, current)
-	if err != nil {
-		return serverError(err)
-	}
-
-	proj := expression.NamesList(expression.Name("date"), expression.Name("time"), expression.Name("wet"), expression.Name("soiled"))
+	proj := expression.NamesList(expression.Name("timestamp"), expression.Name("wet"), expression.Name("soiled"))
 	fdr := make([]FullDiaperRecord, 0)
-	err = getAllForDay(b.config.DiaperTableName, b.dynamodb, d, proj, &fdr)
-	// fdr, err := getAllDiapers(b.config.DiaperTableName, b.dynamodb, d)
+	err = getAllForDay(b.config.DiaperTableName, b.dynamodb, dt, proj, &fdr)
 	if err != nil {
 		return serverError(err)
 	}
-
-	dateD, err := time.ParseInLocation("2006-01-02", d, loc)
-	if err != nil {
-		return serverError(err)
-	}
-	dateStringD := dateD.Format("2006-01-02")
 
 	xmlResp := &Response{}
-	xmlResp.Message = fmt.Sprintf("Diapers on %s", dateStringD)
+	xmlResp.Message = fmt.Sprintf("Diapers on %s", dt.date)
 	var total, wet, soiled int
 	for _, record := range fdr {
-		xmlResp.Message = fmt.Sprintf("%s\n%s - ", xmlResp.Message, record.Time)
+		timeInLoc := time.Unix(record.Timestamp, 0).In(dt.loc).Format("15:04")
+		xmlResp.Message = fmt.Sprintf("%s\n%s - ", xmlResp.Message, timeInLoc)
 		if record.Wet {
 			xmlResp.Message = fmt.Sprintf("%s %s", xmlResp.Message, "Wet")
 			wet++
@@ -520,24 +420,7 @@ func (b *BabyLogger) ListDiapers(message string) (events.APIGatewayProxyResponse
 	}, nil
 }
 
-// func match(start, end, s string) string {
-//     i := strings.Index(s, start)
-//     if i >= 0 {
-//         j := strings.Index(s[i:], end)
-//         if j >= 0 {
-//             return s[i+len(start) : i+j]
-//         }
-//     }
-//     return ""
-// }
-
 func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, error) {
-	current := time.Now().UTC()
-	loc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		return serverError(err)
-	}
-
 	re := regexp.MustCompile(`^new (?P<side>[A-Za-z]+).*`)
 	match := re.FindStringSubmatch(message)
 	index := re.SubexpIndex("side")
@@ -546,16 +429,7 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 		return clientError(http.StatusBadRequest)
 	}
 
-	var d string
-	var dateIncluded bool
-	d, dateIncluded, err = getDate(message, current)
-	if err != nil {
-		return serverError(err)
-	}
-
-	var t string
-	var twentyFourHourTime bool
-	t, d, twentyFourHourTime, current, err = getTime(message, d, dateIncluded, current, loc)
+	dt, err := getDatetime(message)
 	if err != nil {
 		return serverError(err)
 	}
@@ -587,11 +461,11 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 	i := &dynamodb.PutItemInput{
 		TableName: aws.String(b.config.FeedingTableName),
 		Item: map[string]*dynamodb.AttributeValue{
-			"date": {
-				S: aws.String(d),
+			"userid": {
+				N: aws.String(strconv.Itoa(int(UserID))),
 			},
-			"start": {
-				S: aws.String(t),
+			"timestamp": {
+				N: aws.String(strconv.Itoa(int(dt.datetime.Unix()))),
 			},
 			"side": {
 				S: aws.String(side),
@@ -599,13 +473,13 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 		},
 	}
 	if left != "" {
-		i.Item["leftDuration"] = &dynamodb.AttributeValue{N: aws.String(left)}
+		i.Item["left"] = &dynamodb.AttributeValue{N: aws.String(left)}
 	}
 	if right != "" {
-		i.Item["rightDuration"] = &dynamodb.AttributeValue{N: aws.String(right)}
+		i.Item["right"] = &dynamodb.AttributeValue{N: aws.String(right)}
 	}
 	if bottle != "" {
-		i.Item["bottleAmount"] = &dynamodb.AttributeValue{N: aws.String(bottle)}
+		i.Item["bottle"] = &dynamodb.AttributeValue{N: aws.String(bottle)}
 	}
 	o, err := b.dynamodb.PutItem(i)
 	if err != nil {
@@ -620,10 +494,10 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 		sideString = fmt.Sprintf("starting on %s side", side)
 	}
 	xmlResp := &Response{}
-	if twentyFourHourTime {
-		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s %s", current.In(loc).Format("Jan 2 15:04"), sideString)
+	if dt.twentyFourHourTime {
+		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"), sideString)
 	} else {
-		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s %s", current.In(loc).Format("Jan 2 03:04PM"), sideString)
+		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"), sideString)
 	}
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
@@ -641,50 +515,32 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 }
 
 func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse, error) {
-	current := time.Now().UTC()
-	loc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		return serverError(err)
-	}
-
 	re := regexp.MustCompile(`^update last.*`)
 	match := re.FindStringSubmatch(message)
-	var d string
-	var dateIncluded bool
-	var t string
-	var twentyFourHourTime bool
+	var dt *Datetime
 	if len(match) != 0 {
 		fr, err := getLast(b.config.FeedingTableName, b.dynamodb, false)
 		if err != nil {
 			return serverError(err)
 		}
 
-		d = fr.Date
-		t = fr.Start
-
-		// loc, err := time.LoadLocation("America/Los_Angeles")
-		// if err != nil {
-		// 	return serverError(err)
-		// }
-		current, err = time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", fr.Date, fr.Start))
+		dt = &Datetime{}
+		dt.datetime = time.Unix(fr.Timestamp, 0)
+		loc, err := time.LoadLocation("America/Los_Angeles")
 		if err != nil {
 			return serverError(err)
 		}
+		dt.loc = loc
 	} else {
-
-		d, dateIncluded, err = getDate(message, current)
-		if err != nil {
-			return serverError(err)
-		}
-
-		t, d, twentyFourHourTime, current, err = getTime(message, d, dateIncluded, current, loc)
+		var err error
+		dt, err = getDatetime(message)
 		if err != nil {
 			return serverError(err)
 		}
 	}
 
-	cond := expression.Equal(expression.Name("start"), expression.Value(t))
-	exprBuilder := expression.NewBuilder().WithCondition(cond)
+	cond := expression.Name("timestamp").Equal(expression.Value(dt.datetime.Unix()))
+	builder := expression.NewBuilder().WithCondition(cond)
 
 	leftRE := regexp.MustCompile(`.*left (?P<left>\d+){0,1}.*`)
 	leftMatch := leftRE.FindStringSubmatch(message)
@@ -696,7 +552,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		if err != nil {
 			return serverError(err)
 		}
-		exprBuilder.WithUpdate(expression.Set(expression.Name("leftDuration"), expression.Value(leftValue)))
+		builder.WithUpdate(expression.Set(expression.Name("leftDuration"), expression.Value(leftValue)))
 	}
 
 	rightRE := regexp.MustCompile(`.*right (?P<right>\d+){0,1}.*`)
@@ -709,7 +565,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		if err != nil {
 			return serverError(err)
 		}
-		exprBuilder.WithUpdate(expression.Set(expression.Name("rightDuration"), expression.Value(rightValue)))
+		builder.WithUpdate(expression.Set(expression.Name("rightDuration"), expression.Value(rightValue)))
 	}
 
 	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d+){0,1}.*`)
@@ -722,28 +578,26 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		if err != nil {
 			return serverError(err)
 		}
-		exprBuilder.WithUpdate(expression.Set(expression.Name("bottleAmount"), expression.Value(bottleValue)))
+		builder.WithUpdate(expression.Set(expression.Name("bottleAmount"), expression.Value(bottleValue)))
 	}
 
 	if left == "" && right == "" && bottle == "" {
 		return clientError(http.StatusBadRequest)
 	}
 
-	expr, err := exprBuilder.Build()
+	expr, err := builder.Build()
 	if err != nil {
-		fmt.Println(expr)
-		fmt.Println(err)
 		return serverError(err)
 	}
 
 	i := &dynamodb.UpdateItemInput{
 		TableName: aws.String(b.config.FeedingTableName),
 		Key: map[string]*dynamodb.AttributeValue{
-			"date": {
-				S: aws.String(d),
+			"userid": {
+				N: aws.String(strconv.Itoa(int(UserID))),
 			},
-			"start": {
-				S: aws.String(t),
+			"timestamp": {
+				N: aws.String(strconv.Itoa(int(dt.datetime.Unix()))),
 			},
 		},
 		ExpressionAttributeValues: expr.Values(),
@@ -760,10 +614,10 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 	log.WithField("output", o).Info("dynamodb put succeeded")
 
 	xmlResp := &Response{}
-	if twentyFourHourTime {
-		xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", current.In(loc).Format("Jan 2 15:04"))
+	if dt.twentyFourHourTime {
+		xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"))
 	} else {
-		xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", current.In(loc).Format("Jan 2 03:04PM"))
+		xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"))
 	}
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
@@ -781,22 +635,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 }
 
 func (b *BabyLogger) NewDiaper(message string) (events.APIGatewayProxyResponse, error) {
-	current := time.Now().UTC()
-	loc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		return serverError(err)
-	}
-
-	var d string
-	var dateIncluded bool
-	d, dateIncluded, err = getDate(message, current)
-	if err != nil {
-		return serverError(err)
-	}
-
-	var t string
-	var twentyFourHourTime bool
-	t, d, twentyFourHourTime, current, err = getTime(message, d, dateIncluded, current, loc)
+	dt, err := getDatetime(message)
 	if err != nil {
 		return serverError(err)
 	}
@@ -820,11 +659,11 @@ func (b *BabyLogger) NewDiaper(message string) (events.APIGatewayProxyResponse, 
 	i := &dynamodb.PutItemInput{
 		TableName: aws.String(b.config.DiaperTableName),
 		Item: map[string]*dynamodb.AttributeValue{
-			"date": {
-				S: aws.String(d),
+			"userid": {
+				N: aws.String(strconv.Itoa(int(UserID))),
 			},
-			"time": {
-				S: aws.String(t),
+			"timestamp": {
+				N: aws.String(strconv.Itoa(int(dt.datetime.Unix()))),
 			},
 			"wet": {
 				BOOL: aws.Bool(wet),
@@ -844,10 +683,10 @@ func (b *BabyLogger) NewDiaper(message string) (events.APIGatewayProxyResponse, 
 	log.WithField("output", o).Info("dynamodb put succeeded")
 
 	xmlResp := &Response{}
-	if twentyFourHourTime {
-		xmlResp.Message = fmt.Sprintf("New diaper recorded on %s", current.In(loc).Format("Jan 2 15:04"))
+	if dt.twentyFourHourTime {
+		xmlResp.Message = fmt.Sprintf("New diaper recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"))
 	} else {
-		xmlResp.Message = fmt.Sprintf("New diaper recorded on %s", current.In(loc).Format("Jan 2 03:04PM"))
+		xmlResp.Message = fmt.Sprintf("New diaper recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"))
 	}
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
@@ -864,60 +703,155 @@ func (b *BabyLogger) NewDiaper(message string) (events.APIGatewayProxyResponse, 
 	}, nil
 }
 
-func getDate(message string, current time.Time) (string, bool, error) {
-	var d string
-	var dateIncluded bool
-	if strings.Contains(message, "date") {
-		re := regexp.MustCompile(`.*date (?P<date>\d{4}-\d{2}-\d{2}).*`)
-		match := re.FindStringSubmatch(message)
-		index := re.SubexpIndex("date")
-		d = match[index]
-		if d == "" {
-			return "", false, fmt.Errorf("date format is invalid")
-		}
-		dateIncluded = true
-	} else {
-		d = current.Format("2006-01-02")
-	}
+// func getDate(message string, current time.Time) (string, bool, error) {
+// 	var d string
+// 	var dateIncluded bool
+// 	if strings.Contains(message, "date") {
+// 		re := regexp.MustCompile(`.*date (?P<date>\d{4}-\d{2}-\d{2}).*`)
+// 		match := re.FindStringSubmatch(message)
+// 		index := re.SubexpIndex("date")
+// 		d = match[index]
+// 		if d == "" {
+// 			return "", false, fmt.Errorf("date format is invalid")
+// 		}
+// 		dateIncluded = true
+// 	} else {
+// 		d = current.Format("2006-01-02")
+// 	}
 
-	return d, dateIncluded, nil
+// 	return d, dateIncluded, nil
+// }
+
+// func getTime(message, d string, dateIncluded bool, current time.Time, loc *time.Location) (string, string, bool, time.Time, error) {
+// 	var t string
+// 	var twentyFourHourTime bool
+// 	var err error
+// 	if strings.Contains(message, "time") {
+// 		if !dateIncluded {
+// 			d = time.Now().In(loc).Format("2006-01-02")
+// 		}
+// 		re := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
+// 		match := re.FindStringSubmatch(message)
+// 		timeIndex := re.SubexpIndex("time")
+// 		timeValue := match[timeIndex]
+// 		meridiemIndex := re.SubexpIndex("meridiem")
+// 		meridiemValue := match[meridiemIndex]
+// 		if meridiemValue == "" {
+// 			twentyFourHourTime = true
+// 			current, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", d, timeValue), loc)
+// 			if err != nil {
+// 				return "", "", false, time.Time{}, err
+// 			}
+// 		} else {
+// 			if len(timeValue) == 4 {
+// 				timeValue = fmt.Sprintf("0%s", timeValue)
+// 			}
+// 			current, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s %s", d, timeValue, strings.ToUpper(meridiemValue)), loc)
+// 			if err != nil {
+// 				return "", "", false, time.Time{}, err
+// 			}
+// 		}
+// 		if !dateIncluded {
+// 			d = current.UTC().Format("2006-01-02")
+// 		}
+// 		t = current.UTC().Format("15:04")
+// 	} else {
+// 		t = current.Format("15:04")
+// 	}
+// 	return t, d, twentyFourHourTime, current, nil
+// }
+
+type Datetime struct {
+	datetime           time.Time
+	loc                *time.Location
+	date               string
+	time               string
+	twentyFourHourTime bool
 }
 
-func getTime(message, d string, dateIncluded bool, current time.Time, loc *time.Location) (string, string, bool, time.Time, error) {
-	var t string
-	var twentyFourHourTime bool
-	var err error
-	if strings.Contains(message, "time") {
-		if !dateIncluded {
-			d = time.Now().In(loc).Format("2006-01-02")
-		}
-		re := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
-		match := re.FindStringSubmatch(message)
-		timeIndex := re.SubexpIndex("time")
-		timeValue := match[timeIndex]
-		meridiemIndex := re.SubexpIndex("meridiem")
-		meridiemValue := match[meridiemIndex]
+func getDatetime(message string) (*Datetime, error) {
+	dt := &Datetime{}
+	current := time.Now().UTC()
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		return nil, err
+	}
+	dt.loc = loc
+
+	dateRE := regexp.MustCompile(`.*date (?P<date>\d{4}-\d{2}-\d{2}).*`)
+	dateMatch := dateRE.FindStringSubmatch(message)
+	dateIndex := dateRE.SubexpIndex("date")
+	if len(dateMatch) > 0 {
+		dateValue := dateMatch[dateIndex]
+		dt.date = dateValue
+	}
+
+	timeRE := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
+	timeMatch := timeRE.FindStringSubmatch(message)
+	timeIndex := timeRE.SubexpIndex("time")
+	if len(timeMatch) > 0 {
+		timeValue := timeMatch[timeIndex]
+		meridiemIndex := timeRE.SubexpIndex("meridiem")
+		meridiemValue := timeMatch[meridiemIndex]
 		if meridiemValue == "" {
-			twentyFourHourTime = true
-			current, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", d, timeValue), loc)
-			if err != nil {
-				return "", "", false, time.Time{}, err
-			}
+			dt.twentyFourHourTime = true
+			dt.time = timeValue
 		} else {
 			if len(timeValue) == 4 {
 				timeValue = fmt.Sprintf("0%s", timeValue)
 			}
-			current, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s %s", d, timeValue, strings.ToUpper(meridiemValue)), loc)
+			dt.time = fmt.Sprintf("%s %s", timeValue, strings.ToUpper(meridiemValue))
+		}
+	}
+
+	if dt.date != "" && dt.time != "" {
+		var datetime time.Time
+		if dt.twentyFourHourTime {
+			datetime, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", dt.date, dt.time), loc)
 			if err != nil {
-				return "", "", false, time.Time{}, err
+				return nil, err
+			}
+		} else {
+			datetime, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s", dt.date, dt.time), loc)
+			if err != nil {
+				return nil, err
 			}
 		}
-		if !dateIncluded {
-			d = current.UTC().Format("2006-01-02")
+
+		dt.datetime = datetime.UTC()
+		dt.date = dt.datetime.Format("2006-01-02")
+		dt.time = dt.datetime.Format("15:04")
+	} else if dt.date != "" && dt.time == "" {
+		datetime, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", dt.date, current.In(loc).Format("15:04")), loc)
+		if err != nil {
+			return nil, err
 		}
-		t = current.UTC().Format("15:04")
+
+		dt.datetime = datetime.UTC()
+		dt.date = dt.datetime.Format("2006-01-02")
+		dt.time = dt.datetime.Format("15:04")
+	} else if dt.date == "" && dt.time != "" {
+		var datetime time.Time
+		if dt.twentyFourHourTime {
+			datetime, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", current.In(loc).Format("2006-01-02"), dt.time), loc)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			datetime, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s", current.In(loc).Format("2006-01-02"), dt.time), loc)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		dt.datetime = datetime.UTC()
+		dt.date = dt.datetime.Format("2006-01-02")
+		dt.time = dt.datetime.Format("15:04")
 	} else {
-		t = current.Format("15:04")
+		dt.datetime = current
+		dt.date = dt.datetime.Format("2006-01-02")
+		dt.time = dt.datetime.Format("15:04")
 	}
-	return t, d, twentyFourHourTime, current, nil
+
+	return dt, nil
 }
