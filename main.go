@@ -26,7 +26,7 @@ const (
 	RightSide         = "right"
 	BottleSide        = "bottle"
 	LatestFeedRequest = "next"
-	NewFeedRequest    = "new"
+	NewFeedRequest    = "feed"
 	UpdateFeedRequest = "update"
 	NewDiaperRequest  = "diaper"
 	ListDiapers       = "list diapers"
@@ -346,10 +346,11 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 
 	xmlResp := &Response{}
 	xmlResp.Message = fmt.Sprintf("Feedings on %s", dt.datetime.In(dt.loc).Format("2006-01-02"))
-	var left, right, bottle int64
+	var left, right, bottle, count int64
 	for _, record := range ffr {
 		timeInLoc := time.Unix(record.Timestamp, 0).In(dt.loc).Format("15:04")
 		xmlResp.Message = fmt.Sprintf("%s\n%s -", xmlResp.Message, timeInLoc)
+		count++
 		if record.Side == BottleSide {
 			xmlResp.Message = fmt.Sprintf("%s %s %doz", xmlResp.Message, record.Side, record.Bottle)
 			bottle += record.Bottle
@@ -359,7 +360,7 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 			right += record.Right
 		}
 	}
-	xmlResp.Message = fmt.Sprintf("%s\nLeft: %dmin, Right: %dmin, Bottle: %doz", xmlResp.Message, left, right, bottle)
+	xmlResp.Message = fmt.Sprintf("%s\nTotal: %d, Left: %dmin, Right: %dmin, Bottle: %doz", xmlResp.Message, count, left, right, bottle)
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	if err != nil {
@@ -421,7 +422,7 @@ func (b *BabyLogger) ListDiapers(message string) (events.APIGatewayProxyResponse
 }
 
 func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, error) {
-	re := regexp.MustCompile(`^new (?P<side>[A-Za-z]+).*`)
+	re := regexp.MustCompile(`^feed (?P<side>[A-Za-z]+).*`)
 	match := re.FindStringSubmatch(message)
 	index := re.SubexpIndex("side")
 	side := match[index]
@@ -542,8 +543,9 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 	cond := expression.Name("timestamp").Equal(expression.Value(dt.datetime.Unix()))
 	builder := expression.NewBuilder().WithCondition(cond)
 
-	leftRE := regexp.MustCompile(`.*left (?P<left>\d+){0,1}.*`)
+	leftRE := regexp.MustCompile(`.*left (?P<set>(set|add|sub)){0,1}\s*(?P<left>\d+){0,1}.*`)
 	leftMatch := leftRE.FindStringSubmatch(message)
+	leftSetIndex := leftRE.SubexpIndex("set")
 	leftIndex := leftRE.SubexpIndex("left")
 	var left string
 	if len(leftMatch) > 0 {
@@ -552,11 +554,20 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		if err != nil {
 			return serverError(err)
 		}
-		builder.WithUpdate(expression.Set(expression.Name("leftDuration"), expression.Value(leftValue)))
+		switch leftMatch[leftSetIndex] {
+		case "add":
+			builder.WithUpdate(expression.Add(expression.Name("left"), expression.Value(leftValue)))
+		case "sub":
+			builder.WithUpdate(expression.Add(expression.Name("left"), expression.Value(-leftValue)))
+		default:
+			builder.WithUpdate(expression.Set(expression.Name("left"), expression.Value(leftValue)))
+		}
+
 	}
 
-	rightRE := regexp.MustCompile(`.*right (?P<right>\d+){0,1}.*`)
+	rightRE := regexp.MustCompile(`.*right (?P<set>(set|add|sub)){0,1}\s*(?P<right>\d+){0,1}.*`)
 	rightMatch := rightRE.FindStringSubmatch(message)
+	rightSetIndex := rightRE.SubexpIndex("set")
 	rightIndex := rightRE.SubexpIndex("right")
 	var right string
 	if len(rightMatch) > 0 {
@@ -565,11 +576,19 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		if err != nil {
 			return serverError(err)
 		}
-		builder.WithUpdate(expression.Set(expression.Name("rightDuration"), expression.Value(rightValue)))
+		switch rightMatch[rightSetIndex] {
+		case "add":
+			builder.WithUpdate(expression.Add(expression.Name("right"), expression.Value(rightValue)))
+		case "sub":
+			builder.WithUpdate(expression.Add(expression.Name("right"), expression.Value(-rightValue)))
+		default:
+			builder.WithUpdate(expression.Set(expression.Name("right"), expression.Value(rightValue)))
+		}
 	}
 
-	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d+){0,1}.*`)
+	bottleRE := regexp.MustCompile(`.*bottle (?P<set>(set|add|sub)){0,1}\s*(?P<bottle>\d+){0,1}.*`)
 	bottleMatch := bottleRE.FindStringSubmatch(message)
+	bottleSetIndex := bottleRE.SubexpIndex("set")
 	bottleIndex := bottleRE.SubexpIndex("bottle")
 	var bottle string
 	if len(bottleMatch) > 0 {
@@ -578,7 +597,14 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		if err != nil {
 			return serverError(err)
 		}
-		builder.WithUpdate(expression.Set(expression.Name("bottleAmount"), expression.Value(bottleValue)))
+		switch bottleMatch[bottleSetIndex] {
+		case "add":
+			builder.WithUpdate(expression.Add(expression.Name("bottle"), expression.Value(bottleValue)))
+		case "sub":
+			builder.WithUpdate(expression.Add(expression.Name("bottle"), expression.Value(-bottleValue)))
+		default:
+			builder.WithUpdate(expression.Set(expression.Name("bottle"), expression.Value(bottleValue)))
+		}
 	}
 
 	if left == "" && right == "" && bottle == "" {
@@ -702,64 +728,6 @@ func (b *BabyLogger) NewDiaper(message string) (events.APIGatewayProxyResponse, 
 		},
 	}, nil
 }
-
-// func getDate(message string, current time.Time) (string, bool, error) {
-// 	var d string
-// 	var dateIncluded bool
-// 	if strings.Contains(message, "date") {
-// 		re := regexp.MustCompile(`.*date (?P<date>\d{4}-\d{2}-\d{2}).*`)
-// 		match := re.FindStringSubmatch(message)
-// 		index := re.SubexpIndex("date")
-// 		d = match[index]
-// 		if d == "" {
-// 			return "", false, fmt.Errorf("date format is invalid")
-// 		}
-// 		dateIncluded = true
-// 	} else {
-// 		d = current.Format("2006-01-02")
-// 	}
-
-// 	return d, dateIncluded, nil
-// }
-
-// func getTime(message, d string, dateIncluded bool, current time.Time, loc *time.Location) (string, string, bool, time.Time, error) {
-// 	var t string
-// 	var twentyFourHourTime bool
-// 	var err error
-// 	if strings.Contains(message, "time") {
-// 		if !dateIncluded {
-// 			d = time.Now().In(loc).Format("2006-01-02")
-// 		}
-// 		re := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
-// 		match := re.FindStringSubmatch(message)
-// 		timeIndex := re.SubexpIndex("time")
-// 		timeValue := match[timeIndex]
-// 		meridiemIndex := re.SubexpIndex("meridiem")
-// 		meridiemValue := match[meridiemIndex]
-// 		if meridiemValue == "" {
-// 			twentyFourHourTime = true
-// 			current, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", d, timeValue), loc)
-// 			if err != nil {
-// 				return "", "", false, time.Time{}, err
-// 			}
-// 		} else {
-// 			if len(timeValue) == 4 {
-// 				timeValue = fmt.Sprintf("0%s", timeValue)
-// 			}
-// 			current, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s %s", d, timeValue, strings.ToUpper(meridiemValue)), loc)
-// 			if err != nil {
-// 				return "", "", false, time.Time{}, err
-// 			}
-// 		}
-// 		if !dateIncluded {
-// 			d = current.UTC().Format("2006-01-02")
-// 		}
-// 		t = current.UTC().Format("15:04")
-// 	} else {
-// 		t = current.Format("15:04")
-// 	}
-// 	return t, d, twentyFourHourTime, current, nil
-// }
 
 type Datetime struct {
 	datetime           time.Time

@@ -135,7 +135,7 @@ func TestNewFeed(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "new left"
+	message := "feed left"
 	resp, err := bl.NewFeed(message)
 	assert.Nil(t, err)
 
@@ -179,7 +179,7 @@ func TestNewFeed_DateAndTime(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "new right date 2010-01-01 time 1:05 am"
+	message := "feed right date 2010-01-01 time 1:05 am"
 	resp, err := bl.NewFeed(message)
 	assert.Nil(t, err)
 
@@ -223,7 +223,7 @@ func TestNewFeed_DateAndTime_24H(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "new left date 2010-01-01 time 20:05"
+	message := "feed left date 2010-01-01 time 20:05"
 	resp, err := bl.NewFeed(message)
 	assert.Nil(t, err)
 
@@ -270,7 +270,7 @@ func TestNewFeed_LeftAndRight(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "new left left 15 right 10"
+	message := "feed left left 15 right 10"
 	resp, err := bl.NewFeed(message)
 	assert.Nil(t, err)
 
@@ -412,7 +412,7 @@ func TestListFeeds(t *testing.T) {
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
-	xmlResp.Message = "Feedings on 2021-06-19\n13:15 - right 0min 15min\n20:30 - left 10min 0min\nLeft: 10min, Right: 15min, Bottle: 0oz"
+	xmlResp.Message = "Feedings on 2021-06-19\n13:15 - right 0min 15min\n20:30 - left 10min 0min\nTotal: 2, Left: 10min, Right: 15min, Bottle: 0oz"
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
