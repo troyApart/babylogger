@@ -241,16 +241,26 @@ func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, e
 	}
 
 	var timeInterval time.Duration
-	intervalRE := regexp.MustCompile(`^next (?P<interval>\d+){0,1}.*`)
+	intervalRE := regexp.MustCompile(`.*(?P<interval>\d+h).*`)
 	intervalMatch := intervalRE.FindStringSubmatch(message)
 	intervalIndex := intervalRE.SubexpIndex("interval")
-	var interval string
 	if len(intervalMatch) > 0 {
-		interval = fmt.Sprintf("%sh", intervalMatch[intervalIndex])
-		timeInterval, _ = time.ParseDuration(interval)
+		timeInterval, _ = time.ParseDuration(intervalMatch[intervalIndex])
 	}
 	if timeInterval.Hours() == 0 {
 		timeInterval = b.config.FeedingInterval
+	}
+
+	countRE := regexp.MustCompile(`.*(?P<count>\d+)(\s+|$)`)
+	countMatch := countRE.FindStringSubmatch(message)
+	countIndex := countRE.SubexpIndex("count")
+	var count int64
+	if len(countMatch) > 0 {
+		countString := countMatch[countIndex]
+		count, err = strconv.ParseInt(countString, 0, 64)
+		if err != nil {
+			count = 1
+		}
 	}
 
 	previousTime := time.Unix(fr.Timestamp, 0)
@@ -269,7 +279,22 @@ func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, e
 	} else {
 		nextSide = "unknown"
 	}
-	xmlResp.Message = fmt.Sprintf("The next feeding is on your %s side on %s", nextSide, nextTime.Format("Jan 2 03:04PM"))
+	if count > 1 {
+		xmlResp.Message = "The next feedings are:"
+		for i := int64(0); i < count; i++ {
+			xmlResp.Message = fmt.Sprintf("%s\n%s: %s", xmlResp.Message, nextSide, nextTime.Format("Jan 2 03:04PM"))
+			nextTime = nextTime.Add(timeInterval).In(loc)
+			if nextSide == LeftSide {
+				nextSide = RightSide
+			} else if nextSide == RightSide {
+				nextSide = LeftSide
+			} else {
+				nextSide = "unknown"
+			}
+		}
+	} else {
+		xmlResp.Message = fmt.Sprintf("The next feeding is on your %s side on %s", nextSide, nextTime.Format("Jan 2 03:04PM"))
+	}
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	if err != nil {
@@ -286,16 +311,17 @@ func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, e
 }
 
 func getAllForDay(tableName string, db dynamodber, dt *Datetime, proj expression.ProjectionBuilder, output interface{}) error {
-	dayStart, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s 00:00", dt.date), dt.loc)
+	date := time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02")
+	dayStart, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s 00:00", date), dt.loc)
 	if err != nil {
 		return err
 	}
-	dayEnd, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s 23:59", dt.date), dt.loc)
+	dayEnd, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s 23:59", date), dt.loc)
 	if err != nil {
 		return err
 	}
-	dayStartTimestamp := dayStart.UTC().Unix()
-	dayEndTimestamp := dayEnd.UTC().Unix()
+	dayStartTimestamp := dayStart.Unix()
+	dayEndTimestamp := dayEnd.Unix()
 
 	key := expression.KeyEqual(expression.Key("userid"), expression.Value(UserID))
 	key = expression.KeyAnd(key, expression.Key("timestamp").Between(expression.Value(dayStartTimestamp), expression.Value(dayEndTimestamp)))
@@ -327,7 +353,7 @@ func getAllForDay(tableName string, db dynamodber, dt *Datetime, proj expression
 }
 
 func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, error) {
-	dt, err := getDatetime(message)
+	dt, err := getTimestamp(message)
 	if err != nil {
 		return serverError(err)
 	}
@@ -345,7 +371,7 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 	}
 
 	xmlResp := &Response{}
-	xmlResp.Message = fmt.Sprintf("Feedings on %s", dt.datetime.In(dt.loc).Format("2006-01-02"))
+	xmlResp.Message = fmt.Sprintf("Feedings on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02"))
 	var left, right, bottle, count int64
 	for _, record := range ffr {
 		timeInLoc := time.Unix(record.Timestamp, 0).In(dt.loc).Format("15:04")
@@ -377,7 +403,7 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 }
 
 func (b *BabyLogger) ListDiapers(message string) (events.APIGatewayProxyResponse, error) {
-	dt, err := getDatetime(message)
+	dt, err := getTimestamp(message)
 	if err != nil {
 		return serverError(err)
 	}
@@ -390,7 +416,7 @@ func (b *BabyLogger) ListDiapers(message string) (events.APIGatewayProxyResponse
 	}
 
 	xmlResp := &Response{}
-	xmlResp.Message = fmt.Sprintf("Diapers on %s", dt.date)
+	xmlResp.Message = fmt.Sprintf("Diapers on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02"))
 	var total, wet, soiled int
 	for _, record := range fdr {
 		timeInLoc := time.Unix(record.Timestamp, 0).In(dt.loc).Format("15:04")
@@ -542,6 +568,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 
 	cond := expression.Name("timestamp").Equal(expression.Value(dt.datetime.Unix()))
 	builder := expression.NewBuilder().WithCondition(cond)
+	var update expression.UpdateBuilder
 
 	leftRE := regexp.MustCompile(`.*left (?P<set>(set|add|sub)){0,1}\s*(?P<left>\d+){0,1}.*`)
 	leftMatch := leftRE.FindStringSubmatch(message)
@@ -556,11 +583,11 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		}
 		switch leftMatch[leftSetIndex] {
 		case "add":
-			builder.WithUpdate(expression.Add(expression.Name("left"), expression.Value(leftValue)))
+			update = update.Add(expression.Name("left"), expression.Value(leftValue))
 		case "sub":
-			builder.WithUpdate(expression.Add(expression.Name("left"), expression.Value(-leftValue)))
+			update = update.Add(expression.Name("left"), expression.Value(-leftValue))
 		default:
-			builder.WithUpdate(expression.Set(expression.Name("left"), expression.Value(leftValue)))
+			update = update.Set(expression.Name("left"), expression.Value(leftValue))
 		}
 
 	}
@@ -578,11 +605,11 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		}
 		switch rightMatch[rightSetIndex] {
 		case "add":
-			builder.WithUpdate(expression.Add(expression.Name("right"), expression.Value(rightValue)))
+			update = update.Add(expression.Name("right"), expression.Value(rightValue))
 		case "sub":
-			builder.WithUpdate(expression.Add(expression.Name("right"), expression.Value(-rightValue)))
+			update = update.Add(expression.Name("right"), expression.Value(-rightValue))
 		default:
-			builder.WithUpdate(expression.Set(expression.Name("right"), expression.Value(rightValue)))
+			update = update.Set(expression.Name("right"), expression.Value(rightValue))
 		}
 	}
 
@@ -599,11 +626,11 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		}
 		switch bottleMatch[bottleSetIndex] {
 		case "add":
-			builder.WithUpdate(expression.Add(expression.Name("bottle"), expression.Value(bottleValue)))
+			update = update.Add(expression.Name("bottle"), expression.Value(bottleValue))
 		case "sub":
-			builder.WithUpdate(expression.Add(expression.Name("bottle"), expression.Value(-bottleValue)))
+			update = update.Add(expression.Name("bottle"), expression.Value(-bottleValue))
 		default:
-			builder.WithUpdate(expression.Set(expression.Name("bottle"), expression.Value(bottleValue)))
+			update = update.Set(expression.Name("bottle"), expression.Value(bottleValue))
 		}
 	}
 
@@ -611,6 +638,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		return clientError(http.StatusBadRequest)
 	}
 
+	builder.WithUpdate(update)
 	expr, err := builder.Build()
 	if err != nil {
 		return serverError(err)
@@ -731,6 +759,7 @@ func (b *BabyLogger) NewDiaper(message string) (events.APIGatewayProxyResponse, 
 
 type Datetime struct {
 	datetime           time.Time
+	timestamp          int64
 	loc                *time.Location
 	date               string
 	time               string
@@ -819,6 +848,86 @@ func getDatetime(message string) (*Datetime, error) {
 		dt.datetime = current
 		dt.date = dt.datetime.Format("2006-01-02")
 		dt.time = dt.datetime.Format("15:04")
+	}
+
+	return dt, nil
+}
+
+func getTimestamp(message string) (*Datetime, error) {
+	current := time.Now().UTC()
+
+	dt := &Datetime{}
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		return nil, err
+	}
+	dt.loc = loc
+
+	dateRE := regexp.MustCompile(`.*date (?P<date>\d{4}-\d{2}-\d{2}).*`)
+	dateMatch := dateRE.FindStringSubmatch(message)
+	dateIndex := dateRE.SubexpIndex("date")
+	if len(dateMatch) > 0 {
+		dateValue := dateMatch[dateIndex]
+		dt.date = dateValue
+	}
+
+	timeRE := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
+	timeMatch := timeRE.FindStringSubmatch(message)
+	timeIndex := timeRE.SubexpIndex("time")
+	if len(timeMatch) > 0 {
+		timeValue := timeMatch[timeIndex]
+		meridiemIndex := timeRE.SubexpIndex("meridiem")
+		meridiemValue := timeMatch[meridiemIndex]
+		if meridiemValue == "" {
+			dt.twentyFourHourTime = true
+			dt.time = timeValue
+		} else {
+			if len(timeValue) == 4 {
+				timeValue = fmt.Sprintf("0%s", timeValue)
+			}
+			dt.time = fmt.Sprintf("%s %s", timeValue, strings.ToUpper(meridiemValue))
+		}
+	}
+
+	if dt.date != "" && dt.time != "" {
+		var datetime time.Time
+		if dt.twentyFourHourTime {
+			datetime, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", dt.date, dt.time), loc)
+			if err != nil {
+				return nil, err
+			}
+
+		} else {
+			datetime, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s", dt.date, dt.time), loc)
+			if err != nil {
+				return nil, err
+			}
+		}
+		dt.timestamp = datetime.Unix()
+	} else if dt.date != "" && dt.time == "" {
+		datetime, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", dt.date, current.In(loc).Format("15:04")), loc)
+		if err != nil {
+			return nil, err
+		}
+
+		dt.timestamp = datetime.Unix()
+	} else if dt.date == "" && dt.time != "" {
+		var datetime time.Time
+		if dt.twentyFourHourTime {
+			datetime, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", current.In(loc).Format("2006-01-02"), dt.time), loc)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			datetime, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s", current.In(loc).Format("2006-01-02"), dt.time), loc)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		dt.timestamp = datetime.Unix()
+	} else {
+		dt.timestamp = current.Unix()
 	}
 
 	return dt, nil

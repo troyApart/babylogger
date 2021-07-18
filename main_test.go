@@ -116,6 +116,40 @@ func TestNextFeed_Bottle(t *testing.T) {
 	fdb.AssertExpectations(t)
 }
 
+func TestNextFeed_IntervalAndCount(t *testing.T) {
+	outputDate := "2021-06-19"
+	outputTime := "18:32"
+	outputTimestampParse, err := time.Parse("2006-01-02 15:04", fmt.Sprintf("%s %s", outputDate, outputTime))
+	assert.Nil(t, err)
+	outputTimestamp := outputTimestampParse.Unix()
+	outputSide := "left"
+	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+	}}, nil).Once()
+	bl := BabyLogger{
+		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
+		dynamodb: fdb,
+	}
+
+	resp, err := bl.NextFeed("next 4h 5")
+	assert.Nil(t, err)
+
+	xmlResp := &Response{}
+	xmlResp.Message = "The next feedings are:\nright: Jun 19 03:32PM\nleft: Jun 19 07:32PM\nright: Jun 19 11:32PM\nleft: Jun 20 03:32AM\nright: Jun 20 07:32AM"
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusOK,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
 func TestNewFeed(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}
@@ -311,7 +345,7 @@ func TestUpdateFeed_Last(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "update last left 10"
+	message := "update last left 10 right add 5"
 	resp, err := bl.UpdateFeed(message)
 	assert.Nil(t, err)
 
