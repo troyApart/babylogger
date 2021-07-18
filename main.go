@@ -120,14 +120,14 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 			},
 		}, nil
 	}
-	xmlResp.Message = fmt.Sprintf("List of available commands:\n%s\n%s\n%s\n%s\n%s", LatestFeedRequest, NewFeedRequest, NewDiaperRequest, ListFeeds, ListDiapers)
+	xmlResp.Message = fmt.Sprintf("List of available commands:\n%s\n%s\n%s\n%s\n%s\n%s", LatestFeedRequest, NewFeedRequest, UpdateFeedRequest, NewDiaperRequest, ListFeeds, ListDiapers)
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	if err != nil {
 		return serverError(err)
 	}
 	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusNotFound,
+		StatusCode: http.StatusOK,
 		Body:       string(resp),
 		Headers: map[string]string{
 			"content-type": "text/xml",
@@ -138,17 +138,40 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 func serverError(err error) (events.APIGatewayProxyResponse, error) {
 	log.WithField("error", err.Error()).Error("server error")
 
+	var xmlResp Response
+	xmlResp.Message = http.StatusText(http.StatusInternalServerError)
+
+	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	if err != nil {
+		return serverError(err)
+	}
+
 	return events.APIGatewayProxyResponse{
 		StatusCode: http.StatusOK,
-		Body:       http.StatusText(http.StatusInternalServerError),
+		Body:       string(resp),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
 	}, nil
 }
 
 func clientError(status int) (events.APIGatewayProxyResponse, error) {
 	log.Error("client error")
+
+	var xmlResp Response
+	xmlResp.Message = http.StatusText(status)
+
+	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	if err != nil {
+		return serverError(err)
+	}
+
 	return events.APIGatewayProxyResponse{
 		StatusCode: http.StatusOK,
-		Body:       http.StatusText(status),
+		Body:       string(resp),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
 	}, nil
 }
 
