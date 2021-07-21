@@ -279,6 +279,51 @@ func TestNewFeed_DateAndTime_24H(t *testing.T) {
 	fdb.AssertExpectations(t)
 }
 
+func TestNewFeed_DateAndTime_NoYear(t *testing.T) {
+	d := "2021-07-01"
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	assert.Nil(t, err)
+	tiTime, err := time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s 01:05 AM", d), loc)
+	assert.Nil(t, err)
+	fdb := &fakeDynamodb{}
+	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
+		"userid": {
+			N: aws.String(strconv.Itoa(int(UserID))),
+		},
+		"timestamp": {
+			N: aws.String(strconv.Itoa(int(tiTime.UTC().Unix()))),
+		},
+		"side": {
+			S: aws.String("right"),
+		},
+	}}).Return(&dynamodb.PutItemOutput{}, nil).Once()
+	bl := BabyLogger{
+		config:   &Config{FeedingTableName: "feeding"},
+		dynamodb: fdb,
+	}
+
+	message := "feed right date 7/1 time 1:05 am"
+	resp, err := bl.NewFeed(message)
+	assert.Nil(t, err)
+
+	datetime, err := time.Parse("2006-01-02 15:04:05", fmt.Sprintf("%s %s:00", d, tiTime.Format("15:04")))
+	assert.Nil(t, err)
+
+	xmlResp := &Response{}
+	xmlResp.Message = fmt.Sprintf("New feeding recorded on %s starting on %s side", datetime.Format("Jan 2 03:04PM"), "right")
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusCreated,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
 func TestNewFeed_LeftAndRight(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}

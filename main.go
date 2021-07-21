@@ -798,12 +798,33 @@ func getDatetime(message string) (*Datetime, error) {
 	}
 	dt.loc = loc
 
-	dateRE := regexp.MustCompile(`.*date (?P<date>\d{4}-\d{2}-\d{2}).*`)
+	dateRE := regexp.MustCompile(`.*date (?P<date>\d{0,4}(-|/){0,1}\d{1,2}(-|/)\d{1,2}).*`)
 	dateMatch := dateRE.FindStringSubmatch(message)
 	dateIndex := dateRE.SubexpIndex("date")
 	if len(dateMatch) > 0 {
 		dateValue := dateMatch[dateIndex]
-		dt.date = dateValue
+		dSplit := strings.Split(dateValue, "-")
+		if len(dSplit) < 2 {
+			dSplit = strings.Split(dateValue, "/")
+		}
+		var year, month, day string
+		if len(dSplit) > 2 {
+			year = dSplit[0]
+			month = dSplit[1]
+			day = dSplit[2]
+		} else {
+			fmt.Println("no year match")
+			year = current.In(loc).Format("2006")
+			month = dSplit[0]
+			day = dSplit[1]
+		}
+		if len(month) != 2 {
+			month = fmt.Sprintf("0%s", month)
+		}
+		if len(day) != 2 {
+			day = fmt.Sprintf("0%s", day)
+		}
+		dt.date = fmt.Sprintf("%s-%s-%s", year, month, day)
 	}
 
 	timeRE := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
@@ -886,12 +907,33 @@ func getTimestamp(message string) (*Datetime, error) {
 	}
 	dt.loc = loc
 
-	dateRE := regexp.MustCompile(`.*date (?P<date>\d{4}-\d{2}-\d{2}).*`)
+	dateRE := regexp.MustCompile(`.*date (?P<date>\d{0,4}(-|/){0,1}\d{1,2}(-|/)\d{1,2}).*`)
 	dateMatch := dateRE.FindStringSubmatch(message)
 	dateIndex := dateRE.SubexpIndex("date")
 	if len(dateMatch) > 0 {
 		dateValue := dateMatch[dateIndex]
-		dt.date = dateValue
+		dSplit := strings.Split(dateValue, "-")
+		if len(dSplit) < 2 {
+			dSplit = strings.Split(dateValue, "/")
+		}
+		var year, month, day string
+		if len(dSplit) > 2 {
+			year = dSplit[0]
+			month = dSplit[1]
+			day = dSplit[2]
+		} else {
+			fmt.Println("no year match")
+			year = current.In(loc).Format("2006")
+			month = dSplit[0]
+			day = dSplit[1]
+		}
+		if len(month) != 2 {
+			month = fmt.Sprintf("0%s", month)
+		}
+		if len(day) != 2 {
+			day = fmt.Sprintf("0%s", day)
+		}
+		dt.date = fmt.Sprintf("%s-%s-%s", year, month, day)
 	}
 
 	timeRE := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
