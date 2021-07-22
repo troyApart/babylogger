@@ -92,20 +92,52 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 		if err != nil {
 			break
 		}
-		message := strings.ToLower(urlUnescape)
-		if strings.HasPrefix(message, LatestFeedRequest) {
-			return b.NextFeed(message)
-		} else if strings.HasPrefix(message, NewFeedRequest) {
-			return b.NewFeed(message)
-		} else if strings.HasPrefix(message, UpdateFeedRequest) {
-			return b.UpdateFeed(message)
-		} else if strings.HasPrefix(message, NewDiaperRequest) {
-			return b.NewDiaper(message)
-		} else if strings.HasPrefix(message, ListFeeds) {
-			return b.ListFeeds(message)
-		} else if strings.HasPrefix(message, ListDiapers) {
-			return b.ListDiapers(message)
+		commands := strings.Split(urlUnescape, "\n")
+
+		type returns struct {
+			respMessage string
+			err         error
 		}
+		var r []returns
+		for _, command := range commands {
+			var respMessage string
+			var err error
+			message := strings.ToLower(command)
+			if strings.HasPrefix(message, LatestFeedRequest) {
+				respMessage, err = b.NextFeed(message)
+			} else if strings.HasPrefix(message, NewFeedRequest) {
+				respMessage, err = b.NewFeed(message)
+			} else if strings.HasPrefix(message, UpdateFeedRequest) {
+				respMessage, err = b.UpdateFeed(message)
+			} else if strings.HasPrefix(message, NewDiaperRequest) {
+				respMessage, err = b.NewDiaper(message)
+			} else if strings.HasPrefix(message, ListFeeds) {
+				respMessage, err = b.ListFeeds(message)
+			} else if strings.HasPrefix(message, ListDiapers) {
+				respMessage, err = b.ListDiapers(message)
+			}
+			r = append(r, returns{respMessage: respMessage, err: err})
+		}
+
+		for _, ret := range r {
+			if xmlResp.Message == "" {
+				xmlResp.Message = string(ret.respMessage)
+			} else {
+				xmlResp.Message = fmt.Sprintf("%s\n%s", xmlResp.Message, string(ret.respMessage))
+			}
+		}
+
+		resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
+		if err != nil {
+			return serverError(err)
+		}
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusOK,
+			Body:       string(resp),
+			Headers: map[string]string{
+				"content-type": "text/xml",
+			},
+		}, nil
 	default:
 		xmlResp.Message = "Only GET method allowed"
 		resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
@@ -143,7 +175,13 @@ func serverError(err error) (events.APIGatewayProxyResponse, error) {
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	if err != nil {
-		return serverError(err)
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       strconv.Itoa(http.StatusInternalServerError),
+			Headers: map[string]string{
+				"content-type": "text/xml",
+			},
+		}, err
 	}
 
 	return events.APIGatewayProxyResponse{
@@ -257,10 +295,10 @@ func getLast(tableName string, db dynamodber, skipBottle bool) (*FeedingRecord, 
 }
 
 // NextFeed - Gets the latest feeding and responds with expected next feeding and which side
-func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, error) {
+func (b *BabyLogger) NextFeed(message string) (string, error) {
 	fr, err := getLast(b.config.FeedingTableName, b.dynamodb, true)
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 
 	var timeInterval time.Duration
@@ -289,10 +327,10 @@ func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, e
 	previousTime := time.Unix(fr.Timestamp, 0)
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 
-	xmlResp := &Response{}
+	var respMessage string
 	nextTime := previousTime.Add(timeInterval).In(loc)
 	var nextSide string
 	if fr.Side == LeftSide {
@@ -303,9 +341,9 @@ func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, e
 		nextSide = "unknown"
 	}
 	if count > 1 {
-		xmlResp.Message = "The next feedings are:"
+		respMessage = "The next feedings are:"
 		for i := int64(0); i < count; i++ {
-			xmlResp.Message = fmt.Sprintf("%s\n%s: %s", xmlResp.Message, nextSide, nextTime.Format("Jan 2 03:04PM"))
+			respMessage = fmt.Sprintf("%s\n%s: %s", respMessage, nextSide, nextTime.Format("Jan 2 03:04PM"))
 			nextTime = nextTime.Add(timeInterval).In(loc)
 			if nextSide == LeftSide {
 				nextSide = RightSide
@@ -316,21 +354,10 @@ func (b *BabyLogger) NextFeed(message string) (events.APIGatewayProxyResponse, e
 			}
 		}
 	} else {
-		xmlResp.Message = fmt.Sprintf("The next feeding is on your %s side on %s", nextSide, nextTime.Format("Jan 2 03:04PM"))
+		respMessage = fmt.Sprintf("The next feeding is on your %s side on %s", nextSide, nextTime.Format("Jan 2 03:04PM"))
 	}
 
-	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
-	if err != nil {
-		return serverError(err)
-	}
-
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
-		Body:       string(resp),
-		Headers: map[string]string{
-			"content-type": "text/xml",
-		},
-	}, nil
+	return respMessage, nil
 }
 
 func getAllForDay(tableName string, db dynamodber, dt *Datetime, proj expression.ProjectionBuilder, output interface{}) error {
@@ -375,10 +402,10 @@ func getAllForDay(tableName string, db dynamodber, dt *Datetime, proj expression
 	return nil
 }
 
-func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, error) {
+func (b *BabyLogger) ListFeeds(message string) (string, error) {
 	dt, err := getTimestamp(message)
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 
 	proj := expression.NamesList(
@@ -390,99 +417,75 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 	ffr := make([]FullFeedingRecord, 0)
 	err = getAllForDay(b.config.FeedingTableName, b.dynamodb, dt, proj, &ffr)
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 
-	xmlResp := &Response{}
-	xmlResp.Message = fmt.Sprintf("Feedings on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02"))
+	respMessage := fmt.Sprintf("Feedings on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02"))
 	var left, right, count int64
 	var bottle float64
 	for _, record := range ffr {
 		timeInLoc := time.Unix(record.Timestamp, 0).In(dt.loc).Format("15:04")
-		xmlResp.Message = fmt.Sprintf("%s\n%s -", xmlResp.Message, timeInLoc)
+		respMessage = fmt.Sprintf("%s\n%s -", respMessage, timeInLoc)
 		count++
 		if record.Side == BottleSide {
-			xmlResp.Message = fmt.Sprintf("%s %s %.2foz", xmlResp.Message, record.Side, record.Bottle)
+			respMessage = fmt.Sprintf("%s %s %.2foz", respMessage, record.Side, record.Bottle)
 			bottle += record.Bottle
 		} else {
-			xmlResp.Message = fmt.Sprintf("%s %s L: %dmin R: %dmin", xmlResp.Message, record.Side, record.Left, record.Right)
+			respMessage = fmt.Sprintf("%s %s L: %dmin R: %dmin", respMessage, record.Side, record.Left, record.Right)
 			left += record.Left
 			right += record.Right
 		}
 	}
-	xmlResp.Message = fmt.Sprintf("%s\nTotal: %d, Left: %dmin, Right: %dmin, Bottle: %.2foz", xmlResp.Message, count, left, right, bottle)
+	respMessage = fmt.Sprintf("%s\nTotal: %d, Left: %dmin, Right: %dmin, Bottle: %.2foz", respMessage, count, left, right, bottle)
 
-	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
-	if err != nil {
-		return serverError(err)
-	}
-
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
-		Body:       string(resp),
-		Headers: map[string]string{
-			"content-type": "text/xml",
-		},
-	}, nil
+	return respMessage, nil
 }
 
-func (b *BabyLogger) ListDiapers(message string) (events.APIGatewayProxyResponse, error) {
+func (b *BabyLogger) ListDiapers(message string) (string, error) {
 	dt, err := getTimestamp(message)
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 
 	proj := expression.NamesList(expression.Name("timestamp"), expression.Name("wet"), expression.Name("soiled"))
 	fdr := make([]FullDiaperRecord, 0)
 	err = getAllForDay(b.config.DiaperTableName, b.dynamodb, dt, proj, &fdr)
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 
-	xmlResp := &Response{}
-	xmlResp.Message = fmt.Sprintf("Diapers on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02"))
+	respMessage := fmt.Sprintf("Diapers on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02"))
 	var total, wet, soiled int
 	for _, record := range fdr {
 		timeInLoc := time.Unix(record.Timestamp, 0).In(dt.loc).Format("15:04")
-		xmlResp.Message = fmt.Sprintf("%s\n%s - ", xmlResp.Message, timeInLoc)
+		respMessage = fmt.Sprintf("%s\n%s - ", respMessage, timeInLoc)
 		if record.Wet {
-			xmlResp.Message = fmt.Sprintf("%s %s", xmlResp.Message, "Wet")
+			respMessage = fmt.Sprintf("%s %s", respMessage, "Wet")
 			wet++
 		}
 		if record.Soiled {
-			xmlResp.Message = fmt.Sprintf("%s %s", xmlResp.Message, "Soiled")
+			respMessage = fmt.Sprintf("%s %s", respMessage, "Soiled")
 			soiled++
 		}
 		total++
 	}
-	xmlResp.Message = fmt.Sprintf("%s\nTotal: %d, Wet: %d, Soiled: %d", xmlResp.Message, total, wet, soiled)
+	respMessage = fmt.Sprintf("%s\nTotal: %d, Wet: %d, Soiled: %d", respMessage, total, wet, soiled)
 
-	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
-	if err != nil {
-		return serverError(err)
-	}
-
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
-		Body:       string(resp),
-		Headers: map[string]string{
-			"content-type": "text/xml",
-		},
-	}, nil
+	return respMessage, nil
 }
 
-func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, error) {
+func (b *BabyLogger) NewFeed(message string) (string, error) {
 	re := regexp.MustCompile(`^feed (?P<side>[A-Za-z]+).*`)
 	match := re.FindStringSubmatch(message)
 	index := re.SubexpIndex("side")
 	side := match[index]
 	if side != LeftSide && side != RightSide && side != BottleSide {
-		return clientError(http.StatusBadRequest)
+		return "", fmt.Errorf("Invalid side specified")
 	}
 
 	dt, err := getDatetime(message)
 	if err != nil {
-		return serverError(err)
+		return "", nil
 	}
 
 	leftRE := regexp.MustCompile(`.*left (?P<left>\d+){0,1}.*`)
@@ -534,7 +537,7 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 	}
 	o, err := b.dynamodb.PutItem(i)
 	if err != nil {
-		return serverError(err)
+		return "", nil
 	}
 	log.WithField("output", o).Info("dynamodb put succeeded")
 
@@ -544,49 +547,38 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 	} else {
 		sideString = fmt.Sprintf("starting on %s side", side)
 	}
-	xmlResp := &Response{}
+	var respMessage string
 	if dt.twentyFourHourTime {
-		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"), sideString)
+		respMessage = fmt.Sprintf("New feeding recorded on %s %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"), sideString)
 	} else {
-		xmlResp.Message = fmt.Sprintf("New feeding recorded on %s %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"), sideString)
+		respMessage = fmt.Sprintf("New feeding recorded on %s %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"), sideString)
 	}
 
-	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
-	if err != nil {
-		return serverError(err)
-	}
-
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusCreated,
-		Body:       string(resp),
-		Headers: map[string]string{
-			"content-type": "text/xml",
-		},
-	}, nil
+	return respMessage, nil
 }
 
-func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse, error) {
+func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 	re := regexp.MustCompile(`^update last.*`)
 	match := re.FindStringSubmatch(message)
 	var dt *Datetime
 	if len(match) != 0 {
 		fr, err := getLast(b.config.FeedingTableName, b.dynamodb, false)
 		if err != nil {
-			return serverError(err)
+			return "", err
 		}
 
 		dt = &Datetime{}
 		dt.datetime = time.Unix(fr.Timestamp, 0)
 		loc, err := time.LoadLocation("America/Los_Angeles")
 		if err != nil {
-			return serverError(err)
+			return "", err
 		}
 		dt.loc = loc
 	} else {
 		var err error
 		dt, err = getDatetime(message)
 		if err != nil {
-			return serverError(err)
+			return "", err
 		}
 	}
 
@@ -603,7 +595,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		left = leftMatch[leftIndex]
 		leftValue, err := strconv.ParseInt(left, 0, 64)
 		if err != nil {
-			return serverError(err)
+			return "", err
 		}
 		switch leftMatch[leftSetIndex] {
 		case "add":
@@ -625,7 +617,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		right = rightMatch[rightIndex]
 		rightValue, err := strconv.ParseInt(right, 0, 64)
 		if err != nil {
-			return serverError(err)
+			return "", err
 		}
 		switch rightMatch[rightSetIndex] {
 		case "add":
@@ -646,7 +638,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		bottle = bottleMatch[bottleIndex]
 		bottleValue, err := strconv.ParseFloat(bottle, 64)
 		if err != nil {
-			return serverError(err)
+			return "", err
 		}
 		switch bottleMatch[bottleSetIndex] {
 		case "add":
@@ -659,13 +651,13 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 	}
 
 	if left == "" && right == "" && bottle == "" {
-		return clientError(http.StatusBadRequest)
+		return "", fmt.Errorf("Nothing to update")
 	}
 
 	builder.WithUpdate(update)
 	expr, err := builder.Build()
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 
 	i := &dynamodb.UpdateItemInput{
@@ -687,35 +679,24 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 
 	o, err := b.dynamodb.UpdateItem(i)
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 	log.WithField("output", o).Info("dynamodb put succeeded")
 
-	xmlResp := &Response{}
+	var respMessage string
 	if dt.twentyFourHourTime {
-		xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"))
+		respMessage = fmt.Sprintf("Updated feeding recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"))
 	} else {
-		xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"))
+		respMessage = fmt.Sprintf("Updated feeding recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"))
 	}
 
-	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
-	if err != nil {
-		return serverError(err)
-	}
-
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
-		Body:       string(resp),
-		Headers: map[string]string{
-			"content-type": "text/xml",
-		},
-	}, nil
+	return respMessage, nil
 }
 
-func (b *BabyLogger) NewDiaper(message string) (events.APIGatewayProxyResponse, error) {
+func (b *BabyLogger) NewDiaper(message string) (string, error) {
 	dt, err := getDatetime(message)
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 
 	var wet, soiled bool
@@ -756,29 +737,18 @@ func (b *BabyLogger) NewDiaper(message string) (events.APIGatewayProxyResponse, 
 	}
 	o, err := b.dynamodb.PutItem(i)
 	if err != nil {
-		return serverError(err)
+		return "", err
 	}
 	log.WithField("output", o).Info("dynamodb put succeeded")
 
-	xmlResp := &Response{}
+	var respMessage string
 	if dt.twentyFourHourTime {
-		xmlResp.Message = fmt.Sprintf("New diaper recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"))
+		respMessage = fmt.Sprintf("New diaper recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"))
 	} else {
-		xmlResp.Message = fmt.Sprintf("New diaper recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"))
+		respMessage = fmt.Sprintf("New diaper recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"))
 	}
 
-	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
-	if err != nil {
-		return serverError(err)
-	}
-
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusCreated,
-		Body:       string(resp),
-		Headers: map[string]string{
-			"content-type": "text/xml",
-		},
-	}, nil
+	return respMessage, nil
 }
 
 type Datetime struct {

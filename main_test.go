@@ -48,7 +48,8 @@ func TestNextFeed(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	resp, err := bl.NextFeed("next")
+	message := "next"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -94,7 +95,8 @@ func TestNextFeed_Bottle(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	resp, err := bl.NextFeed("next 4h")
+	message := "next 4h"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -132,7 +134,8 @@ func TestNextFeed_IntervalAndCount(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	resp, err := bl.NextFeed("next 4h 5")
+	message := "next 4h 5"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
@@ -170,7 +173,7 @@ func TestNewFeed(t *testing.T) {
 	}
 
 	message := "feed left"
-	resp, err := bl.NewFeed(message)
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -180,7 +183,7 @@ func TestNewFeed(t *testing.T) {
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
-		StatusCode: http.StatusCreated,
+		StatusCode: http.StatusOK,
 		Body:       string(expectedBody),
 		Headers: map[string]string{
 			"content-type": "text/xml",
@@ -214,7 +217,7 @@ func TestNewFeed_DateAndTime(t *testing.T) {
 	}
 
 	message := "feed right date 2010-01-01 time 1:05 am"
-	resp, err := bl.NewFeed(message)
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	datetime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", d, tiTime.Format("15:04")))
@@ -225,7 +228,7 @@ func TestNewFeed_DateAndTime(t *testing.T) {
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
-		StatusCode: http.StatusCreated,
+		StatusCode: http.StatusOK,
 		Body:       string(expectedBody),
 		Headers: map[string]string{
 			"content-type": "text/xml",
@@ -258,7 +261,7 @@ func TestNewFeed_DateAndTime_24H(t *testing.T) {
 	}
 
 	message := "feed left date 2010-01-01 time 20:05"
-	resp, err := bl.NewFeed(message)
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	datetime, err := time.Parse("2006-01-02 15:04", fmt.Sprintf("2010-01-01 %s", tiTime.Format("15:04")))
@@ -269,7 +272,7 @@ func TestNewFeed_DateAndTime_24H(t *testing.T) {
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
-		StatusCode: http.StatusCreated,
+		StatusCode: http.StatusOK,
 		Body:       string(expectedBody),
 		Headers: map[string]string{
 			"content-type": "text/xml",
@@ -303,7 +306,7 @@ func TestNewFeed_DateAndTime_NoYear(t *testing.T) {
 	}
 
 	message := "feed right date 7/1 time 1:05 am"
-	resp, err := bl.NewFeed(message)
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	datetime, err := time.Parse("2006-01-02 15:04:05", fmt.Sprintf("%s %s:00", d, tiTime.Format("15:04")))
@@ -314,7 +317,7 @@ func TestNewFeed_DateAndTime_NoYear(t *testing.T) {
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
-		StatusCode: http.StatusCreated,
+		StatusCode: http.StatusOK,
 		Body:       string(expectedBody),
 		Headers: map[string]string{
 			"content-type": "text/xml",
@@ -349,8 +352,8 @@ func TestNewFeed_LeftAndRight(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed left left 15 right 10"
-	resp, err := bl.NewFeed(message)
+	message := "feed left 15 right 10"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -360,7 +363,7 @@ func TestNewFeed_LeftAndRight(t *testing.T) {
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
-		StatusCode: http.StatusCreated,
+		StatusCode: http.StatusOK,
 		Body:       string(expectedBody),
 		Headers: map[string]string{
 			"content-type": "text/xml",
@@ -391,7 +394,7 @@ func TestUpdateFeed_Last(t *testing.T) {
 	}
 
 	message := "update last left 10 right add 5"
-	resp, err := bl.UpdateFeed(message)
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
@@ -430,7 +433,7 @@ func TestUpdateFeed_LastBottle(t *testing.T) {
 	}
 
 	message := "update last bottle add .5"
-	resp, err := bl.UpdateFeed(message)
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
@@ -474,7 +477,7 @@ func TestDiaper(t *testing.T) {
 	}
 
 	message := "diaper wet soiled checked pre-feed"
-	resp, err := bl.NewDiaper(message)
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -484,7 +487,7 @@ func TestDiaper(t *testing.T) {
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
-		StatusCode: http.StatusCreated,
+		StatusCode: http.StatusOK,
 		Body:       string(expectedBody),
 		Headers: map[string]string{
 			"content-type": "text/xml",
@@ -526,11 +529,75 @@ func TestListFeeds(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	resp, err := bl.ListFeeds("list feeds date 2021-06-19")
+	message := "list feeds date 2021-06-19"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
 	xmlResp.Message = "Feedings on 2021-06-19\n13:15 - right L: 0min R: 15min\n20:30 - left L: 10min R: 0min\nTotal: 2, Left: 10min, Right: 15min, Bottle: 0.00oz"
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusOK,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
+func TestRouter_MultipleCommands(t *testing.T) {
+	outputDate := "2021-06-19"
+	outputTime := "18:32"
+	outputTimestampParse, err := time.Parse("2006-01-02 15:04", fmt.Sprintf("%s %s", outputDate, outputTime))
+	assert.Nil(t, err)
+	outputTimestamp := outputTimestampParse.Unix()
+	outputSide := "left"
+	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+	}}, nil).Once()
+
+	expectedDate := "2021-06-19"
+	expectedTime := "13:15"
+	expectedTime2 := "20:30"
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	assert.Nil(t, err)
+	timeParse, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", expectedDate, expectedTime), loc)
+	assert.Nil(t, err)
+	listOutputTimestamp := timeParse.UTC().Unix()
+	timeParse2, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", expectedDate, expectedTime2), loc)
+	assert.Nil(t, err)
+	listOutputTimestamp2 := timeParse2.UTC().Unix()
+
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
+		{
+			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(listOutputTimestamp)))},
+			"side":      &dynamodb.AttributeValue{S: aws.String("right")},
+			"right":     &dynamodb.AttributeValue{N: aws.String("15")},
+		},
+		{
+			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(listOutputTimestamp2)))},
+			"side":      &dynamodb.AttributeValue{S: aws.String("left")},
+			"left":      &dynamodb.AttributeValue{N: aws.String("10")},
+		},
+	}}, nil).Once()
+	bl := BabyLogger{
+		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
+		dynamodb: fdb,
+	}
+
+	message := "next\nlist feeds date 2021-06-19"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	assert.Nil(t, err)
+
+	previousTime, err := time.Parse("2006-01-02 15:04", fmt.Sprintf("%s %s", outputDate, outputTime))
+	assert.Nil(t, err)
+	xmlResp := &Response{}
+	xmlResp.Message = fmt.Sprintf("The next feeding is on your %s side on %s\nFeedings on 2021-06-19\n13:15 - right L: 0min R: 15min\n20:30 - left L: 10min R: 0min\nTotal: 2, Left: 10min, Right: 15min, Bottle: 0.00oz", RightSide, previousTime.Add(3*time.Hour).In(loc).Format("Jan 2 03:04PM"))
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
