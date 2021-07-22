@@ -409,6 +409,45 @@ func TestUpdateFeed_Last(t *testing.T) {
 	fdb.AssertExpectations(t)
 }
 
+func TestUpdateFeed_LastBottle(t *testing.T) {
+	expectedDate := "2021-06-19"
+	expectedTime := "18:32"
+	expectedSide := "bottle"
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	assert.Nil(t, err)
+	timeParse, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", expectedDate, expectedTime), loc)
+	assert.Nil(t, err)
+	outputTimestamp := timeParse.UTC().Unix()
+
+	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(expectedSide)}},
+	}}, nil).Once()
+	fdb.On("UpdateItem", mock.Anything).Return(&dynamodb.UpdateItemOutput{}, nil)
+	bl := BabyLogger{
+		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
+		dynamodb: fdb,
+	}
+
+	message := "update last bottle add .5"
+	resp, err := bl.UpdateFeed(message)
+	assert.Nil(t, err)
+
+	xmlResp := &Response{}
+	xmlResp.Message = fmt.Sprintf("Updated feeding recorded on %s", timeParse.Format("Jan 2 03:04PM"))
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusOK,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
 func TestDiaper(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}
@@ -491,7 +530,7 @@ func TestListFeeds(t *testing.T) {
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
-	xmlResp.Message = "Feedings on 2021-06-19\n13:15 - right 0min 15min\n20:30 - left 10min 0min\nTotal: 2, Left: 10min, Right: 15min, Bottle: 0.00oz"
+	xmlResp.Message = "Feedings on 2021-06-19\n13:15 - right L: 0min R: 15min\n20:30 - left L: 10min R: 0min\nTotal: 2, Left: 10min, Right: 15min, Bottle: 0.00oz"
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{

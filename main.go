@@ -405,7 +405,7 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 			xmlResp.Message = fmt.Sprintf("%s %s %.2foz", xmlResp.Message, record.Side, record.Bottle)
 			bottle += record.Bottle
 		} else {
-			xmlResp.Message = fmt.Sprintf("%s %s %dmin %dmin", xmlResp.Message, record.Side, record.Left, record.Right)
+			xmlResp.Message = fmt.Sprintf("%s %s L: %dmin R: %dmin", xmlResp.Message, record.Side, record.Left, record.Right)
 			left += record.Left
 			right += record.Right
 		}
@@ -501,7 +501,7 @@ func (b *BabyLogger) NewFeed(message string) (events.APIGatewayProxyResponse, er
 		right = rightMatch[rightIndex]
 	}
 
-	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d+){0,1}.*`)
+	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d*\.{0,1}\d{0,2}){0,1}.*`)
 	bottleMatch := bottleRE.FindStringSubmatch(message)
 	bottleIndex := bottleRE.SubexpIndex("bottle")
 	var bottle string
@@ -637,7 +637,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 		}
 	}
 
-	bottleRE := regexp.MustCompile(`.*bottle (?P<set>(set|add|sub)){0,1}\s*(?P<bottle>\d+){0,1}.*`)
+	bottleRE := regexp.MustCompile(`.*bottle (?P<set>(set|add|sub)){0,1}\s*(?P<bottle>\d*\.{0,1}\d{0,2}){0,1}.*`)
 	bottleMatch := bottleRE.FindStringSubmatch(message)
 	bottleSetIndex := bottleRE.SubexpIndex("set")
 	bottleIndex := bottleRE.SubexpIndex("bottle")
