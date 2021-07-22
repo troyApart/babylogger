@@ -119,12 +119,29 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 			r = append(r, returns{respMessage: respMessage, err: err})
 		}
 
+		var errs int
 		for _, ret := range r {
-			if xmlResp.Message == "" {
-				xmlResp.Message = string(ret.respMessage)
-			} else {
-				xmlResp.Message = fmt.Sprintf("%s\n%s", xmlResp.Message, string(ret.respMessage))
+			if ret.respMessage != "" {
+				if xmlResp.Message == "" {
+					xmlResp.Message = string(ret.respMessage)
+				} else {
+					xmlResp.Message = fmt.Sprintf("%s\n%s", xmlResp.Message, string(ret.respMessage))
+				}
 			}
+
+			if ret.err != nil {
+				errs++
+				log.Error(ret.err.Error())
+				errMessage := "An error occurred"
+				if xmlResp.Message == "" {
+					xmlResp.Message = errMessage
+				} else {
+					xmlResp.Message = fmt.Sprintf("%s\n%s", xmlResp.Message, errMessage)
+				}
+			}
+		}
+		if errs == len(r) {
+			break
 		}
 
 		resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
