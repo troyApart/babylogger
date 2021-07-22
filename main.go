@@ -186,11 +186,11 @@ type FeedingRecord struct {
 }
 
 type FullFeedingRecord struct {
-	Timestamp int64  `json:"timestamp"`
-	Side      string `json:"side"`
-	Left      int64  `json:"left,omitempty"`
-	Right     int64  `json:"right,omitempty"`
-	Bottle    int64  `json:"bottle,omitempty"`
+	Timestamp int64   `json:"timestamp"`
+	Side      string  `json:"side"`
+	Left      int64   `json:"left,omitempty"`
+	Right     int64   `json:"right,omitempty"`
+	Bottle    float64 `json:"bottle,omitempty"`
 }
 
 type FullDiaperRecord struct {
@@ -395,13 +395,14 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 
 	xmlResp := &Response{}
 	xmlResp.Message = fmt.Sprintf("Feedings on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02"))
-	var left, right, bottle, count int64
+	var left, right, count int64
+	var bottle float64
 	for _, record := range ffr {
 		timeInLoc := time.Unix(record.Timestamp, 0).In(dt.loc).Format("15:04")
 		xmlResp.Message = fmt.Sprintf("%s\n%s -", xmlResp.Message, timeInLoc)
 		count++
 		if record.Side == BottleSide {
-			xmlResp.Message = fmt.Sprintf("%s %s %doz", xmlResp.Message, record.Side, record.Bottle)
+			xmlResp.Message = fmt.Sprintf("%s %s %.2foz", xmlResp.Message, record.Side, record.Bottle)
 			bottle += record.Bottle
 		} else {
 			xmlResp.Message = fmt.Sprintf("%s %s %dmin %dmin", xmlResp.Message, record.Side, record.Left, record.Right)
@@ -409,7 +410,7 @@ func (b *BabyLogger) ListFeeds(message string) (events.APIGatewayProxyResponse, 
 			right += record.Right
 		}
 	}
-	xmlResp.Message = fmt.Sprintf("%s\nTotal: %d, Left: %dmin, Right: %dmin, Bottle: %doz", xmlResp.Message, count, left, right, bottle)
+	xmlResp.Message = fmt.Sprintf("%s\nTotal: %d, Left: %dmin, Right: %dmin, Bottle: %.2foz", xmlResp.Message, count, left, right, bottle)
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	if err != nil {
@@ -643,7 +644,7 @@ func (b *BabyLogger) UpdateFeed(message string) (events.APIGatewayProxyResponse,
 	var bottle string
 	if len(bottleMatch) > 0 {
 		bottle = bottleMatch[bottleIndex]
-		bottleValue, err := strconv.ParseInt(bottle, 0, 64)
+		bottleValue, err := strconv.ParseFloat(bottle, 64)
 		if err != nil {
 			return serverError(err)
 		}

@@ -491,7 +491,7 @@ func TestListFeeds(t *testing.T) {
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
-	xmlResp.Message = "Feedings on 2021-06-19\n13:15 - right 0min 15min\n20:30 - left 10min 0min\nTotal: 2, Left: 10min, Right: 15min, Bottle: 0oz"
+	xmlResp.Message = "Feedings on 2021-06-19\n13:15 - right 0min 15min\n20:30 - left 10min 0min\nTotal: 2, Left: 10min, Right: 15min, Bottle: 0.00oz"
 	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	assert.Nil(t, err)
 	assert.Equal(t, events.APIGatewayProxyResponse{
