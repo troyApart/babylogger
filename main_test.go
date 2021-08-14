@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -40,8 +41,9 @@ func TestNextFeed(t *testing.T) {
 	outputTimestamp := outputTimestampParse.Unix()
 	outputSide := "left"
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
-		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
 	}}, nil).Once()
 	bl := BabyLogger{
 		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
@@ -84,11 +86,12 @@ func TestNextFeed_Bottle(t *testing.T) {
 	outputTimestampIgnore := outputTimestampIgnoreParse.Unix()
 	outputSide := "left"
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
-		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSideSkip)}},
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSideSkip)}},
 	}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
-		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestampIgnore)))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestampIgnore, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
 	}}, nil).Once()
 	bl := BabyLogger{
 		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
@@ -126,8 +129,9 @@ func TestNextFeed_IntervalAndCount(t *testing.T) {
 	outputTimestamp := outputTimestampParse.Unix()
 	outputSide := "left"
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
-		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
 	}}, nil).Once()
 	bl := BabyLogger{
 		config:   &Config{FeedingTableName: "feeding", FeedingInterval: 3 * time.Hour},
@@ -156,12 +160,13 @@ func TestNextFeed_IntervalAndCount(t *testing.T) {
 func TestNewFeed(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
-			N: aws.String(strconv.Itoa(int(UserID))),
+			N: aws.String("1"),
 		},
 		"timestamp": {
-			N: aws.String(strconv.Itoa(int(current.Unix()))),
+			N: aws.String(strconv.FormatInt(current.Unix(), 10)),
 		},
 		"side": {
 			S: aws.String("left"),
@@ -200,12 +205,13 @@ func TestNewFeed_DateAndTime(t *testing.T) {
 	tiTime, err := time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s 01:05 AM", d), loc)
 	assert.Nil(t, err)
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
-			N: aws.String(strconv.Itoa(int(UserID))),
+			N: aws.String("1"),
 		},
 		"timestamp": {
-			N: aws.String(strconv.Itoa(int(tiTime.UTC().Unix()))),
+			N: aws.String(strconv.FormatInt(tiTime.UTC().Unix(), 10)),
 		},
 		"side": {
 			S: aws.String("right"),
@@ -216,7 +222,7 @@ func TestNewFeed_DateAndTime(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed right date 2010-01-01 time 1:05 am"
+	message := "feed right 2010-01-01 1:05 am"
 	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
@@ -244,12 +250,13 @@ func TestNewFeed_DateAndTime_24H(t *testing.T) {
 	tiTime, err := time.ParseInLocation("2006-01-02 15:04", "2010-01-01 20:05", loc)
 	assert.Nil(t, err)
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
-			N: aws.String(strconv.Itoa(int(UserID))),
+			N: aws.String("1"),
 		},
 		"timestamp": {
-			N: aws.String(strconv.Itoa(int(tiTime.UTC().Unix()))),
+			N: aws.String(strconv.FormatInt(tiTime.UTC().Unix(), 10)),
 		},
 		"side": {
 			S: aws.String("left"),
@@ -260,7 +267,7 @@ func TestNewFeed_DateAndTime_24H(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed left date 2010-01-01 time 20:05"
+	message := "feed left 2010-01-01 20:05"
 	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
@@ -289,12 +296,13 @@ func TestNewFeed_DateAndTime_NoYear(t *testing.T) {
 	tiTime, err := time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s 01:05 AM", d), loc)
 	assert.Nil(t, err)
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
-			N: aws.String(strconv.Itoa(int(UserID))),
+			N: aws.String("1"),
 		},
 		"timestamp": {
-			N: aws.String(strconv.Itoa(int(tiTime.UTC().Unix()))),
+			N: aws.String(strconv.FormatInt(tiTime.UTC().Unix(), 10)),
 		},
 		"side": {
 			S: aws.String("right"),
@@ -305,7 +313,7 @@ func TestNewFeed_DateAndTime_NoYear(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed right date 7/1 time 1:05 am"
+	message := "feed right 7/1 1:05 am"
 	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
@@ -327,15 +335,62 @@ func TestNewFeed_DateAndTime_NoYear(t *testing.T) {
 	fdb.AssertExpectations(t)
 }
 
+func TestNewFeed_DateAndTime_Right(t *testing.T) {
+	d := "2010-01-01"
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	assert.Nil(t, err)
+	tiTime, err := time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s 01:05 AM", d), loc)
+	assert.Nil(t, err)
+	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
+		"userid": {
+			N: aws.String("1"),
+		},
+		"timestamp": {
+			N: aws.String(strconv.FormatInt(tiTime.UTC().Unix(), 10)),
+		},
+		"side": {
+			S: aws.String("right"),
+		},
+	}}).Return(&dynamodb.PutItemOutput{}, nil).Once()
+	bl := BabyLogger{
+		config:   &Config{FeedingTableName: "feeding"},
+		dynamodb: fdb,
+	}
+
+	message := "feed right 15 2010-01-01 1:05 am"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	assert.Nil(t, err)
+
+	datetime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", d, tiTime.Format("15:04")))
+	assert.Nil(t, err)
+
+	xmlResp := &Response{}
+	xmlResp.Message = fmt.Sprintf("New feeding recorded on %s starting on %s side", datetime.Format("Jan 2 03:04PM"), "right")
+	expectedBody, err := xml.MarshalIndent(xmlResp, " ", "  ")
+	assert.Nil(t, err)
+	assert.Equal(t, events.APIGatewayProxyResponse{
+		StatusCode: http.StatusOK,
+		Body:       string(expectedBody),
+		Headers: map[string]string{
+			"content-type": "text/xml",
+		},
+	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
 func TestNewFeed_LeftAndRight(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil)
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
-			N: aws.String(strconv.Itoa(int(UserID))),
+			N: aws.String("1"),
 		},
 		"timestamp": {
-			N: aws.String(strconv.Itoa(int(current.Unix()))),
+			N: aws.String(strconv.FormatInt(current.Unix(), 10)),
 		},
 		"side": {
 			S: aws.String("left"),
@@ -384,8 +439,9 @@ func TestUpdateFeed_Last(t *testing.T) {
 	outputTimestamp := timeParse.UTC().Unix()
 
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
-		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(expectedSide)}},
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(expectedSide)}},
 	}}, nil).Once()
 	fdb.On("UpdateItem", mock.Anything).Return(&dynamodb.UpdateItemOutput{}, nil)
 	bl := BabyLogger{
@@ -423,8 +479,9 @@ func TestUpdateFeed_LastBottle(t *testing.T) {
 	outputTimestamp := timeParse.UTC().Unix()
 
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
-		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(expectedSide)}},
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(expectedSide)}},
 	}}, nil).Once()
 	fdb.On("UpdateItem", mock.Anything).Return(&dynamodb.UpdateItemOutput{}, nil)
 	bl := BabyLogger{
@@ -454,12 +511,13 @@ func TestUpdateFeed_LastBottle(t *testing.T) {
 func TestDiaper(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil)
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("diaper"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
-			N: aws.String(strconv.Itoa(int(UserID))),
+			N: aws.String("1"),
 		},
 		"timestamp": {
-			N: aws.String(strconv.Itoa(int(current.Unix()))),
+			N: aws.String(strconv.FormatInt(current.Unix(), 10)),
 		},
 		"wet": {
 			BOOL: aws.Bool(true),
@@ -512,14 +570,15 @@ func TestListFeeds(t *testing.T) {
 	outputTimestamp2 := timeParse2.UTC().Unix()
 
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{
-			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))},
+			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))},
 			"side":      &dynamodb.AttributeValue{S: aws.String("right")},
 			"right":     &dynamodb.AttributeValue{N: aws.String("15")},
 		},
 		{
-			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp2)))},
+			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp2, 10))},
 			"side":      &dynamodb.AttributeValue{S: aws.String("left")},
 			"left":      &dynamodb.AttributeValue{N: aws.String("10")},
 		},
@@ -529,7 +588,7 @@ func TestListFeeds(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "list feeds date 2021-06-19"
+	message := "list feeds 2021-06-19"
 	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
@@ -556,8 +615,9 @@ func TestRouter_MultipleCommands(t *testing.T) {
 	outputTimestamp := outputTimestampParse.Unix()
 	outputSide := "left"
 	fdb := &fakeDynamodb{}
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
-		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(outputTimestamp)))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
+		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
 	}}, nil).Once()
 
 	expectedDate := "2021-06-19"
@@ -575,12 +635,12 @@ func TestRouter_MultipleCommands(t *testing.T) {
 
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{
-			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(listOutputTimestamp)))},
+			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(listOutputTimestamp, 10))},
 			"side":      &dynamodb.AttributeValue{S: aws.String("right")},
 			"right":     &dynamodb.AttributeValue{N: aws.String("15")},
 		},
 		{
-			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.Itoa(int(listOutputTimestamp2)))},
+			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(listOutputTimestamp2, 10))},
 			"side":      &dynamodb.AttributeValue{S: aws.String("left")},
 			"left":      &dynamodb.AttributeValue{N: aws.String("10")},
 		},
@@ -590,7 +650,7 @@ func TestRouter_MultipleCommands(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "next\nlist feeds date 2021-06-19"
+	message := "next\nlist feeds 2021-06-19"
 	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
 	assert.Nil(t, err)
 
@@ -607,6 +667,36 @@ func TestRouter_MultipleCommands(t *testing.T) {
 			"content-type": "text/xml",
 		},
 	}, resp)
+
+	fdb.AssertExpectations(t)
+}
+
+func TestUserLookup(t *testing.T) {
+	fdb := &fakeDynamodb{}
+	builder := expression.NewBuilder()
+	key := expression.Key("number").Equal(expression.Value("+1234567890"))
+	proj := expression.NamesList(expression.Name("userid"))
+	expr, err := builder.WithKeyCondition(key).WithProjection(proj).Build()
+	assert.Nil(t, err)
+	qi := &dynamodb.QueryInput{
+		TableName:                 aws.String("user"),
+		Limit:                     aws.Int64(1),
+		ScanIndexForward:          aws.Bool(false),
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		ProjectionExpression:      expr.Projection(),
+		KeyConditionExpression:    expr.KeyCondition(),
+	}
+	fdb.On("Query", qi).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+
+	bl := BabyLogger{
+		config:   &Config{UserTableName: "user"},
+		dynamodb: fdb,
+	}
+
+	err = bl.userLookup("+1234567890")
+	assert.Nil(t, err)
+	assert.Equal(t, int64(1), bl.userid)
 
 	fdb.AssertExpectations(t)
 }

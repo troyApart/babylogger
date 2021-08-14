@@ -31,13 +31,13 @@ const (
 	NewDiaperRequest  = "diaper"
 	ListDiapers       = "list diapers"
 	ListFeeds         = "list feeds"
-	UserID            = int64(1)
 )
 
 type Config struct {
 	FeedingTableName string
 	FeedingInterval  time.Duration
 	DiaperTableName  string
+	UserTableName    string
 }
 
 func main() {
@@ -49,7 +49,8 @@ func main() {
 	log.WithFields(log.Fields{
 		"feeding_table":    c.FeedingTableName,
 		"feeding_interval": c.FeedingInterval,
-		"diaper_table":     c.DiaperTableName}).
+		"diaper_table":     c.DiaperTableName,
+		"user_table":       c.UserTableName}).
 		Info("config loaded")
 
 	s := session.Must(session.NewSession())
@@ -72,6 +73,7 @@ type dynamodber interface {
 type BabyLogger struct {
 	config   *Config
 	dynamodb dynamodber
+	userid   int64
 }
 
 func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
@@ -88,6 +90,11 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 
 	switch req.HTTPMethod {
 	case "GET":
+		err := b.userLookup(req.QueryStringParameters["From"])
+		if err != nil {
+			break
+		}
+
 		urlUnescape, err := url.QueryUnescape(req.QueryStringParameters["Body"])
 		if err != nil {
 			break
@@ -230,6 +237,48 @@ func clientError(status int) (events.APIGatewayProxyResponse, error) {
 	}, nil
 }
 
+type UserRecord struct {
+	UserID int64 `json:"userid"`
+}
+
+func (b *BabyLogger) userLookup(phoneNumber string) error {
+	builder := expression.NewBuilder()
+	key := expression.Key("number").Equal(expression.Value(phoneNumber))
+	proj := expression.NamesList(expression.Name("userid"))
+	expr, err := builder.WithKeyCondition(key).WithProjection(proj).Build()
+	if err != nil {
+		return err
+	}
+
+	qi := &dynamodb.QueryInput{
+		TableName:                 aws.String(b.config.UserTableName),
+		Limit:                     aws.Int64(1),
+		ScanIndexForward:          aws.Bool(false),
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		ProjectionExpression:      expr.Projection(),
+		KeyConditionExpression:    expr.KeyCondition(),
+	}
+
+	o, err := b.dynamodb.Query(qi)
+	if err != nil {
+		return err
+	}
+	log.WithField("output", o.String()).Info("dynamodb query succeeded")
+
+	if len(o.Items) != 1 {
+		return err
+	}
+	var ur UserRecord
+	err = dynamodbattribute.UnmarshalMap(o.Items[0], &ur)
+	if err != nil {
+		return err
+	}
+
+	b.userid = ur.UserID
+	return nil
+}
+
 type Response struct {
 	XMLName xml.Name `xml:"Response"`
 	Message string   `xml:"Message"`
@@ -255,12 +304,12 @@ type FullDiaperRecord struct {
 	Checked   string `json:"checked,omitempty"`
 }
 
-func getLast(tableName string, db dynamodber, skipBottle bool) (*FeedingRecord, error) {
+func getLast(tableName string, db dynamodber, userid int64, skipBottle bool) (*FeedingRecord, error) {
 	var lastTimestamp int64
 	var keyCond *expression.KeyConditionBuilder
 	for i := 1; i < 5; i++ {
 		builder := expression.NewBuilder()
-		key := expression.Key("userid").Equal(expression.Value(UserID))
+		key := expression.Key("userid").Equal(expression.Value(userid))
 		if keyCond != nil {
 			key = expression.KeyAnd(key, *keyCond)
 		}
@@ -313,7 +362,7 @@ func getLast(tableName string, db dynamodber, skipBottle bool) (*FeedingRecord, 
 
 // NextFeed - Gets the latest feeding and responds with expected next feeding and which side
 func (b *BabyLogger) NextFeed(message string) (string, error) {
-	fr, err := getLast(b.config.FeedingTableName, b.dynamodb, true)
+	fr, err := getLast(b.config.FeedingTableName, b.dynamodb, b.userid, true)
 	if err != nil {
 		return "", err
 	}
@@ -335,7 +384,7 @@ func (b *BabyLogger) NextFeed(message string) (string, error) {
 	var count int64
 	if len(countMatch) > 0 {
 		countString := countMatch[countIndex]
-		count, err = strconv.ParseInt(countString, 0, 64)
+		count, err = strconv.ParseInt(countString, 10, 64)
 		if err != nil {
 			count = 1
 		}
@@ -377,7 +426,7 @@ func (b *BabyLogger) NextFeed(message string) (string, error) {
 	return respMessage, nil
 }
 
-func getAllForDay(tableName string, db dynamodber, dt *Datetime, proj expression.ProjectionBuilder, output interface{}) error {
+func getAllForDay(tableName string, db dynamodber, userid int64, dt *Datetime, proj expression.ProjectionBuilder, output interface{}) error {
 	date := time.Unix(dt.timestamp, 0).In(dt.loc).Format("2006-01-02")
 	dayStart, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s 00:00", date), dt.loc)
 	if err != nil {
@@ -390,7 +439,7 @@ func getAllForDay(tableName string, db dynamodber, dt *Datetime, proj expression
 	dayStartTimestamp := dayStart.Unix()
 	dayEndTimestamp := dayEnd.Unix()
 
-	key := expression.KeyEqual(expression.Key("userid"), expression.Value(UserID))
+	key := expression.KeyEqual(expression.Key("userid"), expression.Value(userid))
 	key = expression.KeyAnd(key, expression.Key("timestamp").Between(expression.Value(dayStartTimestamp), expression.Value(dayEndTimestamp)))
 	expr, err := expression.NewBuilder().WithKeyCondition(key).WithProjection(proj).Build()
 	if err != nil {
@@ -432,7 +481,7 @@ func (b *BabyLogger) ListFeeds(message string) (string, error) {
 		expression.Name("right"),
 		expression.Name("bottle"))
 	ffr := make([]FullFeedingRecord, 0)
-	err = getAllForDay(b.config.FeedingTableName, b.dynamodb, dt, proj, &ffr)
+	err = getAllForDay(b.config.FeedingTableName, b.dynamodb, b.userid, dt, proj, &ffr)
 	if err != nil {
 		return "", err
 	}
@@ -466,7 +515,7 @@ func (b *BabyLogger) ListDiapers(message string) (string, error) {
 
 	proj := expression.NamesList(expression.Name("timestamp"), expression.Name("wet"), expression.Name("soiled"))
 	fdr := make([]FullDiaperRecord, 0)
-	err = getAllForDay(b.config.DiaperTableName, b.dynamodb, dt, proj, &fdr)
+	err = getAllForDay(b.config.DiaperTableName, b.dynamodb, b.userid, dt, proj, &fdr)
 	if err != nil {
 		return "", err
 	}
@@ -500,12 +549,12 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 		return "", fmt.Errorf("Invalid side specified")
 	}
 
-	dt, err := getDatetime(message)
+	dt, err := getTimestamp(message)
 	if err != nil {
 		return "", nil
 	}
 
-	leftRE := regexp.MustCompile(`.*left (?P<left>\d+){0,1}.*`)
+	leftRE := regexp.MustCompile(`.*left (?P<left>\d+)(\s+|$).*`)
 	leftMatch := leftRE.FindStringSubmatch(message)
 	leftIndex := leftRE.SubexpIndex("left")
 	var left string
@@ -513,7 +562,7 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 		left = leftMatch[leftIndex]
 	}
 
-	rightRE := regexp.MustCompile(`.*right (?P<right>\d+){0,1}.*`)
+	rightRE := regexp.MustCompile(`.*right (?P<right>\d+)(\s+|$).*`)
 	rightMatch := rightRE.FindStringSubmatch(message)
 	rightIndex := rightRE.SubexpIndex("right")
 	var right string
@@ -521,7 +570,7 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 		right = rightMatch[rightIndex]
 	}
 
-	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d*\.{0,1}\d{0,2}){0,1}.*`)
+	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d*\.{0,1}\d{0,2})(\s+|$).*`)
 	bottleMatch := bottleRE.FindStringSubmatch(message)
 	bottleIndex := bottleRE.SubexpIndex("bottle")
 	var bottle string
@@ -533,10 +582,11 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 		TableName: aws.String(b.config.FeedingTableName),
 		Item: map[string]*dynamodb.AttributeValue{
 			"userid": {
-				N: aws.String(strconv.Itoa(int(UserID))),
+
+				N: aws.String(strconv.FormatInt(b.userid, 10)),
 			},
 			"timestamp": {
-				N: aws.String(strconv.Itoa(int(dt.datetime.Unix()))),
+				N: aws.String(strconv.FormatInt(dt.timestamp, 10)),
 			},
 			"side": {
 				S: aws.String(side),
@@ -566,9 +616,9 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 	}
 	var respMessage string
 	if dt.twentyFourHourTime {
-		respMessage = fmt.Sprintf("New feeding recorded on %s %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"), sideString)
+		respMessage = fmt.Sprintf("New feeding recorded on %s %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 15:04"), sideString)
 	} else {
-		respMessage = fmt.Sprintf("New feeding recorded on %s %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"), sideString)
+		respMessage = fmt.Sprintf("New feeding recorded on %s %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 03:04PM"), sideString)
 	}
 
 	return respMessage, nil
@@ -579,13 +629,13 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 	match := re.FindStringSubmatch(message)
 	var dt *Datetime
 	if len(match) != 0 {
-		fr, err := getLast(b.config.FeedingTableName, b.dynamodb, false)
+		fr, err := getLast(b.config.FeedingTableName, b.dynamodb, b.userid, false)
 		if err != nil {
 			return "", err
 		}
 
 		dt = &Datetime{}
-		dt.datetime = time.Unix(fr.Timestamp, 0)
+		dt.timestamp = fr.Timestamp
 		loc, err := time.LoadLocation("America/Los_Angeles")
 		if err != nil {
 			return "", err
@@ -593,24 +643,24 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 		dt.loc = loc
 	} else {
 		var err error
-		dt, err = getDatetime(message)
+		dt, err = getTimestamp(message)
 		if err != nil {
 			return "", err
 		}
 	}
 
-	cond := expression.Name("timestamp").Equal(expression.Value(dt.datetime.Unix()))
+	cond := expression.Name("timestamp").Equal(expression.Value(dt.timestamp))
 	builder := expression.NewBuilder().WithCondition(cond)
 	var update expression.UpdateBuilder
 
-	leftRE := regexp.MustCompile(`.*left (?P<set>(set|add|sub)){0,1}\s*(?P<left>\d+){0,1}.*`)
+	leftRE := regexp.MustCompile(`.*left (?P<set>(set|add|sub)){0,1}\s*(?P<left>\d+)(\s+|$).*`)
 	leftMatch := leftRE.FindStringSubmatch(message)
 	leftSetIndex := leftRE.SubexpIndex("set")
 	leftIndex := leftRE.SubexpIndex("left")
 	var left string
 	if len(leftMatch) > 0 {
 		left = leftMatch[leftIndex]
-		leftValue, err := strconv.ParseInt(left, 0, 64)
+		leftValue, err := strconv.ParseInt(left, 10, 64)
 		if err != nil {
 			return "", err
 		}
@@ -625,14 +675,14 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 
 	}
 
-	rightRE := regexp.MustCompile(`.*right (?P<set>(set|add|sub)){0,1}\s*(?P<right>\d+){0,1}.*`)
+	rightRE := regexp.MustCompile(`.*right (?P<set>(set|add|sub)){0,1}\s*(?P<right>\d+)(\s+|$).*`)
 	rightMatch := rightRE.FindStringSubmatch(message)
 	rightSetIndex := rightRE.SubexpIndex("set")
 	rightIndex := rightRE.SubexpIndex("right")
 	var right string
 	if len(rightMatch) > 0 {
 		right = rightMatch[rightIndex]
-		rightValue, err := strconv.ParseInt(right, 0, 64)
+		rightValue, err := strconv.ParseInt(right, 10, 64)
 		if err != nil {
 			return "", err
 		}
@@ -646,7 +696,7 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 		}
 	}
 
-	bottleRE := regexp.MustCompile(`.*bottle (?P<set>(set|add|sub)){0,1}\s*(?P<bottle>\d*\.{0,1}\d{0,2}){0,1}.*`)
+	bottleRE := regexp.MustCompile(`.*bottle (?P<set>(set|add|sub)){0,1}\s*(?P<bottle>\d*\.{0,1}\d{0,2})(\s+|$).*`)
 	bottleMatch := bottleRE.FindStringSubmatch(message)
 	bottleSetIndex := bottleRE.SubexpIndex("set")
 	bottleIndex := bottleRE.SubexpIndex("bottle")
@@ -681,10 +731,10 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 		TableName: aws.String(b.config.FeedingTableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"userid": {
-				N: aws.String(strconv.Itoa(int(UserID))),
+				N: aws.String(strconv.FormatInt(b.userid, 10)),
 			},
 			"timestamp": {
-				N: aws.String(strconv.Itoa(int(dt.datetime.Unix()))),
+				N: aws.String(strconv.FormatInt(dt.timestamp, 10)),
 			},
 		},
 		ExpressionAttributeValues: expr.Values(),
@@ -702,16 +752,16 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 
 	var respMessage string
 	if dt.twentyFourHourTime {
-		respMessage = fmt.Sprintf("Updated feeding recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"))
+		respMessage = fmt.Sprintf("Updated feeding recorded on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 15:04"))
 	} else {
-		respMessage = fmt.Sprintf("Updated feeding recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"))
+		respMessage = fmt.Sprintf("Updated feeding recorded on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 03:04PM"))
 	}
 
 	return respMessage, nil
 }
 
 func (b *BabyLogger) NewDiaper(message string) (string, error) {
-	dt, err := getDatetime(message)
+	dt, err := getTimestamp(message)
 	if err != nil {
 		return "", err
 	}
@@ -736,10 +786,10 @@ func (b *BabyLogger) NewDiaper(message string) (string, error) {
 		TableName: aws.String(b.config.DiaperTableName),
 		Item: map[string]*dynamodb.AttributeValue{
 			"userid": {
-				N: aws.String(strconv.Itoa(int(UserID))),
+				N: aws.String(strconv.FormatInt(b.userid, 10)),
 			},
 			"timestamp": {
-				N: aws.String(strconv.Itoa(int(dt.datetime.Unix()))),
+				N: aws.String(strconv.FormatInt(dt.timestamp, 10)),
 			},
 			"wet": {
 				BOOL: aws.Bool(wet),
@@ -760,9 +810,9 @@ func (b *BabyLogger) NewDiaper(message string) (string, error) {
 
 	var respMessage string
 	if dt.twentyFourHourTime {
-		respMessage = fmt.Sprintf("New diaper recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 15:04"))
+		respMessage = fmt.Sprintf("New diaper recorded on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 15:04"))
 	} else {
-		respMessage = fmt.Sprintf("New diaper recorded on %s", dt.datetime.In(dt.loc).Format("Jan 2 03:04PM"))
+		respMessage = fmt.Sprintf("New diaper recorded on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 03:04PM"))
 	}
 
 	return respMessage, nil
@@ -777,114 +827,6 @@ type Datetime struct {
 	twentyFourHourTime bool
 }
 
-func getDatetime(message string) (*Datetime, error) {
-	dt := &Datetime{}
-	current := time.Now().UTC()
-	loc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		return nil, err
-	}
-	dt.loc = loc
-
-	dateRE := regexp.MustCompile(`.*date (?P<date>\d{0,4}(-|/){0,1}\d{1,2}(-|/)\d{1,2}).*`)
-	dateMatch := dateRE.FindStringSubmatch(message)
-	dateIndex := dateRE.SubexpIndex("date")
-	if len(dateMatch) > 0 {
-		dateValue := dateMatch[dateIndex]
-		dSplit := strings.Split(dateValue, "-")
-		if len(dSplit) < 2 {
-			dSplit = strings.Split(dateValue, "/")
-		}
-		var year, month, day string
-		if len(dSplit) > 2 {
-			year = dSplit[0]
-			month = dSplit[1]
-			day = dSplit[2]
-		} else {
-			fmt.Println("no year match")
-			year = current.In(loc).Format("2006")
-			month = dSplit[0]
-			day = dSplit[1]
-		}
-		if len(month) != 2 {
-			month = fmt.Sprintf("0%s", month)
-		}
-		if len(day) != 2 {
-			day = fmt.Sprintf("0%s", day)
-		}
-		dt.date = fmt.Sprintf("%s-%s-%s", year, month, day)
-	}
-
-	timeRE := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
-	timeMatch := timeRE.FindStringSubmatch(message)
-	timeIndex := timeRE.SubexpIndex("time")
-	if len(timeMatch) > 0 {
-		timeValue := timeMatch[timeIndex]
-		meridiemIndex := timeRE.SubexpIndex("meridiem")
-		meridiemValue := timeMatch[meridiemIndex]
-		if meridiemValue == "" {
-			dt.twentyFourHourTime = true
-			dt.time = timeValue
-		} else {
-			if len(timeValue) == 4 {
-				timeValue = fmt.Sprintf("0%s", timeValue)
-			}
-			dt.time = fmt.Sprintf("%s %s", timeValue, strings.ToUpper(meridiemValue))
-		}
-	}
-
-	if dt.date != "" && dt.time != "" {
-		var datetime time.Time
-		if dt.twentyFourHourTime {
-			datetime, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", dt.date, dt.time), loc)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			datetime, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s", dt.date, dt.time), loc)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		dt.datetime = datetime.UTC()
-		dt.date = dt.datetime.Format("2006-01-02")
-		dt.time = dt.datetime.Format("15:04")
-	} else if dt.date != "" && dt.time == "" {
-		datetime, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", dt.date, current.In(loc).Format("15:04")), loc)
-		if err != nil {
-			return nil, err
-		}
-
-		dt.datetime = datetime.UTC()
-		dt.date = dt.datetime.Format("2006-01-02")
-		dt.time = dt.datetime.Format("15:04")
-	} else if dt.date == "" && dt.time != "" {
-		var datetime time.Time
-		if dt.twentyFourHourTime {
-			datetime, err = time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", current.In(loc).Format("2006-01-02"), dt.time), loc)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			datetime, err = time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s %s", current.In(loc).Format("2006-01-02"), dt.time), loc)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		dt.datetime = datetime.UTC()
-		dt.date = dt.datetime.Format("2006-01-02")
-		dt.time = dt.datetime.Format("15:04")
-	} else {
-		dt.datetime = current
-		dt.date = dt.datetime.Format("2006-01-02")
-		dt.time = dt.datetime.Format("15:04")
-	}
-
-	return dt, nil
-}
-
 func getTimestamp(message string) (*Datetime, error) {
 	current := time.Now().UTC()
 
@@ -895,25 +837,14 @@ func getTimestamp(message string) (*Datetime, error) {
 	}
 	dt.loc = loc
 
-	dateRE := regexp.MustCompile(`.*date (?P<date>\d{0,4}(-|/){0,1}\d{1,2}(-|/)\d{1,2}).*`)
+	dateRE := regexp.MustCompile(`.*\s+(?P<year>\d{4})*(-|/)*(?P<month>\d{1,2})(-|/)(?P<day>\d{1,2}).*`)
 	dateMatch := dateRE.FindStringSubmatch(message)
-	dateIndex := dateRE.SubexpIndex("date")
 	if len(dateMatch) > 0 {
-		dateValue := dateMatch[dateIndex]
-		dSplit := strings.Split(dateValue, "-")
-		if len(dSplit) < 2 {
-			dSplit = strings.Split(dateValue, "/")
-		}
-		var year, month, day string
-		if len(dSplit) > 2 {
-			year = dSplit[0]
-			month = dSplit[1]
-			day = dSplit[2]
-		} else {
-			fmt.Println("no year match")
+		year := dateMatch[dateRE.SubexpIndex("year")]
+		month := dateMatch[dateRE.SubexpIndex("month")]
+		day := dateMatch[dateRE.SubexpIndex("day")]
+		if year == "" {
 			year = current.In(loc).Format("2006")
-			month = dSplit[0]
-			day = dSplit[1]
 		}
 		if len(month) != 2 {
 			month = fmt.Sprintf("0%s", month)
@@ -924,7 +855,7 @@ func getTimestamp(message string) (*Datetime, error) {
 		dt.date = fmt.Sprintf("%s-%s-%s", year, month, day)
 	}
 
-	timeRE := regexp.MustCompile(`.*time (?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm)){0,1}.*`)
+	timeRE := regexp.MustCompile(`.*\s+(?P<time>\d{1,2}:\d{2})\s*(?P<meridiem>(am|pm))*.*`)
 	timeMatch := timeRE.FindStringSubmatch(message)
 	timeIndex := timeRE.SubexpIndex("time")
 	if len(timeMatch) > 0 {
