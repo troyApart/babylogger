@@ -41,7 +41,7 @@ func TestNextFeed(t *testing.T) {
 	outputTimestamp := outputTimestampParse.Unix()
 	outputSide := "left"
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
 	}}, nil).Once()
@@ -86,7 +86,7 @@ func TestNextFeed_Bottle(t *testing.T) {
 	outputTimestampIgnore := outputTimestampIgnoreParse.Unix()
 	outputSide := "left"
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSideSkip)}},
 	}}, nil).Once()
@@ -129,7 +129,7 @@ func TestNextFeed_IntervalAndCount(t *testing.T) {
 	outputTimestamp := outputTimestampParse.Unix()
 	outputSide := "left"
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
 	}}, nil).Once()
@@ -160,7 +160,7 @@ func TestNextFeed_IntervalAndCount(t *testing.T) {
 func TestNewFeed(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
 			N: aws.String("1"),
@@ -205,7 +205,7 @@ func TestNewFeed_DateAndTime(t *testing.T) {
 	tiTime, err := time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s 01:05 AM", d), loc)
 	assert.Nil(t, err)
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
 			N: aws.String("1"),
@@ -250,7 +250,7 @@ func TestNewFeed_DateAndTime_24H(t *testing.T) {
 	tiTime, err := time.ParseInLocation("2006-01-02 15:04", "2010-01-01 20:05", loc)
 	assert.Nil(t, err)
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
 			N: aws.String("1"),
@@ -296,7 +296,7 @@ func TestNewFeed_DateAndTime_NoYear(t *testing.T) {
 	tiTime, err := time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s 01:05 AM", d), loc)
 	assert.Nil(t, err)
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
 			N: aws.String("1"),
@@ -342,7 +342,7 @@ func TestNewFeed_DateAndTime_Right(t *testing.T) {
 	tiTime, err := time.ParseInLocation("2006-01-02 03:04 PM", fmt.Sprintf("%s 01:05 AM", d), loc)
 	assert.Nil(t, err)
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
 			N: aws.String("1"),
@@ -352,6 +352,9 @@ func TestNewFeed_DateAndTime_Right(t *testing.T) {
 		},
 		"side": {
 			S: aws.String("right"),
+		},
+		"right": {
+			N: aws.String("15"),
 		},
 	}}).Return(&dynamodb.PutItemOutput{}, nil).Once()
 	bl := BabyLogger{
@@ -384,7 +387,7 @@ func TestNewFeed_DateAndTime_Right(t *testing.T) {
 func TestNewFeed_LeftAndRight(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil)
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil)
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("feeding"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
 			N: aws.String("1"),
@@ -439,7 +442,7 @@ func TestUpdateFeed_Last(t *testing.T) {
 	outputTimestamp := timeParse.UTC().Unix()
 
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(expectedSide)}},
 	}}, nil).Once()
@@ -479,7 +482,7 @@ func TestUpdateFeed_LastBottle(t *testing.T) {
 	outputTimestamp := timeParse.UTC().Unix()
 
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(expectedSide)}},
 	}}, nil).Once()
@@ -511,7 +514,7 @@ func TestUpdateFeed_LastBottle(t *testing.T) {
 func TestDiaper(t *testing.T) {
 	current := time.Now().UTC()
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil)
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil)
 	fdb.On("PutItem", &dynamodb.PutItemInput{TableName: aws.String("diaper"), Item: map[string]*dynamodb.AttributeValue{
 		"userid": {
 			N: aws.String("1"),
@@ -570,7 +573,7 @@ func TestListFeeds(t *testing.T) {
 	outputTimestamp2 := timeParse2.UTC().Unix()
 
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{
 			"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))},
@@ -615,7 +618,7 @@ func TestRouter_MultipleCommands(t *testing.T) {
 	outputTimestamp := outputTimestampParse.Unix()
 	outputSide := "left"
 	fdb := &fakeDynamodb{}
-	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 	fdb.On("Query", mock.Anything).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{
 		{"timestamp": &dynamodb.AttributeValue{N: aws.String(strconv.FormatInt(outputTimestamp, 10))}, "side": &dynamodb.AttributeValue{S: aws.String(outputSide)}},
 	}}, nil).Once()
@@ -675,7 +678,7 @@ func TestUserLookup(t *testing.T) {
 	fdb := &fakeDynamodb{}
 	builder := expression.NewBuilder()
 	key := expression.Key("number").Equal(expression.Value("+1234567890"))
-	proj := expression.NamesList(expression.Name("userid"))
+	proj := expression.NamesList(expression.Name("id"))
 	expr, err := builder.WithKeyCondition(key).WithProjection(proj).Build()
 	assert.Nil(t, err)
 	qi := &dynamodb.QueryInput{
@@ -687,7 +690,7 @@ func TestUserLookup(t *testing.T) {
 		ProjectionExpression:      expr.Projection(),
 		KeyConditionExpression:    expr.KeyCondition(),
 	}
-	fdb.On("Query", qi).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"userid": {N: aws.String("1")}}}}, nil).Once()
+	fdb.On("Query", qi).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 
 	bl := BabyLogger{
 		config:   &Config{UserTableName: "user"},

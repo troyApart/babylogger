@@ -238,13 +238,13 @@ func clientError(status int) (events.APIGatewayProxyResponse, error) {
 }
 
 type UserRecord struct {
-	UserID int64 `json:"userid"`
+	UserID int64 `json:"id"`
 }
 
 func (b *BabyLogger) userLookup(phoneNumber string) error {
 	builder := expression.NewBuilder()
 	key := expression.Key("number").Equal(expression.Value(phoneNumber))
-	proj := expression.NamesList(expression.Name("userid"))
+	proj := expression.NamesList(expression.Name("id"))
 	expr, err := builder.WithKeyCondition(key).WithProjection(proj).Build()
 	if err != nil {
 		return err
