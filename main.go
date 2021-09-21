@@ -31,6 +31,11 @@ const (
 	NewDiaperRequest  = "diaper"
 	ListDiapers       = "list diapers"
 	ListFeeds         = "list feeds"
+	RemoveDiaper      = "remove diaper"
+	RemoveFeed        = "remove feed"
+	RemoveAccount     = "remove account"
+	RemoveNumber      = "remove number"
+	AddAccount        = "add account"
 )
 
 type Config struct {
@@ -38,6 +43,7 @@ type Config struct {
 	FeedingInterval  time.Duration
 	DiaperTableName  string
 	UserTableName    string
+	IDTableName      string
 }
 
 func main() {
@@ -50,7 +56,8 @@ func main() {
 		"feeding_table":    c.FeedingTableName,
 		"feeding_interval": c.FeedingInterval,
 		"diaper_table":     c.DiaperTableName,
-		"user_table":       c.UserTableName}).
+		"user_table":       c.UserTableName,
+		"id_table":         c.IDTableName}).
 		Info("config loaded")
 
 	s := session.Must(session.NewSession())
@@ -67,6 +74,7 @@ func main() {
 type dynamodber interface {
 	PutItem(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error)
 	UpdateItem(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error)
+	DeleteItem(*dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error)
 	Query(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error)
 }
 
@@ -74,6 +82,11 @@ type BabyLogger struct {
 	config   *Config
 	dynamodb dynamodber
 	userid   int64
+}
+
+type Response struct {
+	XMLName xml.Name `xml:"Response"`
+	Message string   `xml:"Message"`
 }
 
 func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
@@ -92,7 +105,18 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 	case "GET":
 		err := b.userLookup(req.QueryStringParameters["From"])
 		if err != nil {
-			break
+			xmlResp := "No account found for number\nTo create, send \"add account\""
+			resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
+			if err != nil {
+				return serverError(err)
+			}
+			return events.APIGatewayProxyResponse{
+				StatusCode: http.StatusOK,
+				Body:       string(resp),
+				Headers: map[string]string{
+					"content-type": "text/xml",
+				},
+			}, nil
 		}
 
 		urlUnescape, err := url.QueryUnescape(req.QueryStringParameters["Body"])
@@ -122,6 +146,12 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 				respMessage, err = b.ListFeeds(message)
 			} else if strings.HasPrefix(message, ListDiapers) {
 				respMessage, err = b.ListDiapers(message)
+			} else if strings.HasPrefix(message, RemoveDiaper) {
+				respMessage, err = b.RemoveRecord(message, b.config.DiaperTableName)
+			} else if strings.HasPrefix(message, RemoveFeed) {
+				respMessage, err = b.RemoveRecord(message, b.config.FeedingTableName)
+			} else if strings.HasPrefix(message, AddAccount) {
+				respMessage, err = b.AddAccount(message)
 			}
 			r = append(r, returns{respMessage: respMessage, err: err})
 		}
@@ -241,6 +271,10 @@ type UserRecord struct {
 	UserID int64 `json:"id"`
 }
 
+type IDRecord struct {
+	Count int64 `json:"count"`
+}
+
 func (b *BabyLogger) userLookup(phoneNumber string) error {
 	builder := expression.NewBuilder()
 	key := expression.Key("number").Equal(expression.Value(phoneNumber))
@@ -279,9 +313,58 @@ func (b *BabyLogger) userLookup(phoneNumber string) error {
 	return nil
 }
 
-type Response struct {
-	XMLName xml.Name `xml:"Response"`
-	Message string   `xml:"Message"`
+func (b *BabyLogger) AddAccount(phoneNumber string) (string, error) {
+	builder := expression.NewBuilder().
+		WithUpdate(expression.Add(expression.Name("count"), expression.Value(1)))
+	expr, err := builder.Build()
+	if err != nil {
+		return "", err
+	}
+
+	uii := &dynamodb.UpdateItemInput{
+		TableName: aws.String(b.config.IDTableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"id": {
+				N: aws.String("userid"),
+			},
+		},
+		ExpressionAttributeValues: expr.Values(),
+		ExpressionAttributeNames:  expr.Names(),
+		ReturnValues:              aws.String("UPDATED_NEW"),
+		UpdateExpression:          expr.Update(),
+	}
+
+	uo, err := b.dynamodb.UpdateItem(uii)
+	if err != nil {
+		return "", err
+	}
+	log.WithField("output", uo).Info("dynamodb update succeeded")
+
+	var ir IDRecord
+	err = dynamodbattribute.UnmarshalMap(uo.Attributes, &ir)
+	if err != nil {
+		return "", err
+	}
+
+	pii := &dynamodb.PutItemInput{
+		TableName: aws.String(b.config.FeedingTableName),
+		Item: map[string]*dynamodb.AttributeValue{
+			"number": {
+				N: aws.String(phoneNumber),
+			},
+			"id": {
+				N: aws.String(strconv.FormatInt(ir.Count, 10)),
+			},
+		},
+	}
+
+	po, err := b.dynamodb.PutItem(pii)
+	if err != nil {
+		return "", err
+	}
+	log.WithField("output", po).Info("dynamodb put succeeded")
+
+	return "Account created", nil
 }
 
 type FeedingRecord struct {
@@ -748,7 +831,7 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.WithField("output", o).Info("dynamodb put succeeded")
+	log.WithField("output", o).Info("dynamodb update succeeded")
 
 	var respMessage string
 	if dt.twentyFourHourTime {
@@ -813,6 +896,41 @@ func (b *BabyLogger) NewDiaper(message string) (string, error) {
 		respMessage = fmt.Sprintf("New diaper recorded on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 15:04"))
 	} else {
 		respMessage = fmt.Sprintf("New diaper recorded on %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 03:04PM"))
+	}
+
+	return respMessage, nil
+}
+
+func (b *BabyLogger) RemoveRecord(message string, table string) (string, error) {
+	dt, err := getTimestamp(message)
+	if err != nil {
+		return "", err
+	}
+
+	i := &dynamodb.DeleteItemInput{
+		TableName: aws.String(table),
+		Key: map[string]*dynamodb.AttributeValue{
+			"userid": {
+				N: aws.String(strconv.FormatInt(b.userid, 10)),
+			},
+			"timestamp": {
+				N: aws.String(strconv.FormatInt(dt.timestamp, 10)),
+			},
+		},
+		ReturnValues: aws.String("All_OLD"),
+	}
+
+	o, err := b.dynamodb.DeleteItem(i)
+	if err != nil || o.Attributes == nil {
+		return "", err
+	}
+
+	log.WithField("output", o).Info("dynamodb delete succeeded")
+	var respMessage string
+	if dt.twentyFourHourTime {
+		respMessage = fmt.Sprintf("Record removed for %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 15:04"))
+	} else {
+		respMessage = fmt.Sprintf("Record removed for %s", time.Unix(dt.timestamp, 0).In(dt.loc).Format("Jan 2 03:04PM"))
 	}
 
 	return respMessage, nil

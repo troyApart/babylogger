@@ -28,6 +28,10 @@ func (f *fakeDynamodb) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.Up
 	ret := f.Called(input)
 	return ret.Get(0).(*dynamodb.UpdateItemOutput), ret.Error(1)
 }
+func (f *fakeDynamodb) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
+	ret := f.Called(input)
+	return ret.Get(0).(*dynamodb.DeleteItemOutput), ret.Error(1)
+}
 func (f *fakeDynamodb) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 	ret := f.Called(input)
 	return ret.Get(0).(*dynamodb.QueryOutput), ret.Error(1)
