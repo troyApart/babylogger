@@ -103,22 +103,6 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 
 	switch req.HTTPMethod {
 	case "GET":
-		err := b.userLookup(req.QueryStringParameters["From"])
-		if err != nil {
-			xmlResp := "No account found for number\nTo create, send \"add account\""
-			resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
-			if err != nil {
-				return serverError(err)
-			}
-			return events.APIGatewayProxyResponse{
-				StatusCode: http.StatusOK,
-				Body:       string(resp),
-				Headers: map[string]string{
-					"content-type": "text/xml",
-				},
-			}, nil
-		}
-
 		urlUnescape, err := url.QueryUnescape(req.QueryStringParameters["Body"])
 		if err != nil {
 			break
@@ -130,30 +114,53 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 			err         error
 		}
 		var r []returns
-		for _, command := range commands {
+
+		err = b.userLookup(req.QueryStringParameters["From"])
+		if err != nil || b.userid == 0 {
 			var respMessage string
 			var err error
-			message := strings.ToLower(command)
-			if strings.HasPrefix(message, LatestFeedRequest) {
-				respMessage, err = b.NextFeed(message)
-			} else if strings.HasPrefix(message, NewFeedRequest) {
-				respMessage, err = b.NewFeed(message)
-			} else if strings.HasPrefix(message, UpdateFeedRequest) {
-				respMessage, err = b.UpdateFeed(message)
-			} else if strings.HasPrefix(message, NewDiaperRequest) {
-				respMessage, err = b.NewDiaper(message)
-			} else if strings.HasPrefix(message, ListFeeds) {
-				respMessage, err = b.ListFeeds(message)
-			} else if strings.HasPrefix(message, ListDiapers) {
-				respMessage, err = b.ListDiapers(message)
-			} else if strings.HasPrefix(message, RemoveDiaper) {
-				respMessage, err = b.RemoveRecord(message, b.config.DiaperTableName)
-			} else if strings.HasPrefix(message, RemoveFeed) {
-				respMessage, err = b.RemoveRecord(message, b.config.FeedingTableName)
-			} else if strings.HasPrefix(message, AddAccount) {
+			message := strings.ToLower(commands[0])
+			if strings.HasPrefix(message, AddAccount) {
 				respMessage, err = b.AddAccount(message)
+			} else {
+				xmlResp := "No account found for number\nTo create, send \"add account\""
+				resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
+				if err != nil {
+					return serverError(err)
+				}
+				return events.APIGatewayProxyResponse{
+					StatusCode: http.StatusOK,
+					Body:       string(resp),
+					Headers: map[string]string{
+						"content-type": "text/xml",
+					},
+				}, nil
 			}
 			r = append(r, returns{respMessage: respMessage, err: err})
+		} else {
+			for _, command := range commands {
+				var respMessage string
+				var err error
+				message := strings.ToLower(command)
+				if strings.HasPrefix(message, LatestFeedRequest) {
+					respMessage, err = b.NextFeed(message)
+				} else if strings.HasPrefix(message, NewFeedRequest) {
+					respMessage, err = b.NewFeed(message)
+				} else if strings.HasPrefix(message, UpdateFeedRequest) {
+					respMessage, err = b.UpdateFeed(message)
+				} else if strings.HasPrefix(message, NewDiaperRequest) {
+					respMessage, err = b.NewDiaper(message)
+				} else if strings.HasPrefix(message, ListFeeds) {
+					respMessage, err = b.ListFeeds(message)
+				} else if strings.HasPrefix(message, ListDiapers) {
+					respMessage, err = b.ListDiapers(message)
+				} else if strings.HasPrefix(message, RemoveDiaper) {
+					respMessage, err = b.RemoveRecord(message, b.config.DiaperTableName)
+				} else if strings.HasPrefix(message, RemoveFeed) {
+					respMessage, err = b.RemoveRecord(message, b.config.FeedingTableName)
+				}
+				r = append(r, returns{respMessage: respMessage, err: err})
+			}
 		}
 
 		var errs int
