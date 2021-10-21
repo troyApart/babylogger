@@ -54,8 +54,8 @@ func TestNextFeed(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "next"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "next feed"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -102,8 +102,8 @@ func TestNextFeed_Bottle(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "next 4h"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "next feed 4h"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -142,8 +142,8 @@ func TestNextFeed_IntervalAndCount(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "next 4h 5"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "next feed 4h 5"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
@@ -181,8 +181,8 @@ func TestNewFeed(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed left"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "new feed left"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -226,8 +226,8 @@ func TestNewFeed_DateAndTime(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed right 2010-01-01 1:05 am"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "new feed right 2010-01-01 1:05 am"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	datetime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", d, tiTime.Format("15:04")))
@@ -271,8 +271,8 @@ func TestNewFeed_DateAndTime_24H(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed left 2010-01-01 20:05"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "new feed left 2010-01-01 20:05"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	datetime, err := time.Parse("2006-01-02 15:04", fmt.Sprintf("2010-01-01 %s", tiTime.Format("15:04")))
@@ -317,8 +317,8 @@ func TestNewFeed_DateAndTime_NoYear(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed right 7/1 1:05 am"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "new feed right 7/1 1:05 am"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	datetime, err := time.Parse("2006-01-02 15:04:05", fmt.Sprintf("%s %s:00", d, tiTime.Format("15:04")))
@@ -366,8 +366,8 @@ func TestNewFeed_DateAndTime_Right(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed right 15 2010-01-01 1:05 am"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "new feed right 15 2010-01-01 1:05 am"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	datetime, err := time.Parse("2006-01-02T15:04:05", fmt.Sprintf("%sT%s:00", d, tiTime.Format("15:04")))
@@ -414,8 +414,8 @@ func TestNewFeed_LeftAndRight(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "feed left 15 right 10"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "new feed left 15 right 10"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -456,8 +456,8 @@ func TestUpdateFeed_Last(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "update last left 10 right add 5"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "update feed last left 10 right add 5"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
@@ -496,8 +496,8 @@ func TestUpdateFeed_LastBottle(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "update last bottle add .5"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "update feed last bottle add .5"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
@@ -541,8 +541,8 @@ func TestDiaper(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "diaper wet soiled checked pre-feed"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "new diaper wet soiled checked pre-feed"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	loc, err := time.LoadLocation("America/Los_Angeles")
@@ -596,7 +596,7 @@ func TestListFeeds(t *testing.T) {
 	}
 
 	message := "list feeds 2021-06-19"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	xmlResp := &Response{}
@@ -657,8 +657,8 @@ func TestRouter_MultipleCommands(t *testing.T) {
 		dynamodb: fdb,
 	}
 
-	message := "next\nlist feeds 2021-06-19"
-	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"Body": message}})
+	message := "next feed\nlist feeds 2021-06-19"
+	resp, err := bl.Router(events.APIGatewayProxyRequest{HTTPMethod: http.MethodGet, QueryStringParameters: map[string]string{"From": "+1234567890", "Body": message}})
 	assert.Nil(t, err)
 
 	previousTime, err := time.Parse("2006-01-02 15:04", fmt.Sprintf("%s %s", outputDate, outputTime))
@@ -696,14 +696,15 @@ func TestUserLookup(t *testing.T) {
 	}
 	fdb.On("Query", qi).Return(&dynamodb.QueryOutput{Items: []map[string]*dynamodb.AttributeValue{{"id": {N: aws.String("1")}}}}, nil).Once()
 
-	bl := BabyLogger{
-		config:   &Config{UserTableName: "user"},
-		dynamodb: fdb,
+	opts := &options{
+		phoneNumber: "+1234567890",
+		db:          fdb,
+		config:      &Config{UserTableName: "user"},
 	}
 
-	err = bl.userLookup("+1234567890")
+	userID, err := userLookup(opts)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(1), bl.userid)
+	assert.Equal(t, int64(1), userID)
 
 	fdb.AssertExpectations(t)
 }

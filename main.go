@@ -22,21 +22,43 @@ import (
 )
 
 const (
-	LeftSide          = "left"
-	RightSide         = "right"
-	BottleSide        = "bottle"
-	LatestFeedRequest = "next"
-	NewFeedRequest    = "feed"
-	UpdateFeedRequest = "update"
-	NewDiaperRequest  = "diaper"
-	ListDiapers       = "list diapers"
-	ListFeeds         = "list feeds"
-	RemoveDiaper      = "remove diaper"
-	RemoveFeed        = "remove feed"
-	RemoveAccount     = "remove account"
-	RemoveNumber      = "remove number"
-	AddAccount        = "add account"
+	LeftSide   = "left"
+	RightSide  = "right"
+	BottleSide = "bottle"
+
+	LatestFeedRequest    = "next feed"
+	NewFeedRequest       = "new feed"
+	UpdateFeedRequest    = "update feed"
+	NewDiaperRequest     = "new diaper"
+	ListDiapersRequest   = "list diapers"
+	ListFeedsRequest     = "list feeds"
+	RemoveDiaperRequest  = "remove diaper"
+	RemoveFeedRequest    = "remove feed"
+	RemoveAccountRequest = "remove account"
+	RemoveNumberRequest  = "remove number"
+	AddAccountRequest    = "add account"
 )
+
+type options struct {
+	message     string
+	db          dynamodber
+	userID      int64
+	phoneNumber string
+	config      *Config
+}
+
+var Routes = map[string]func(*options) (string, error){
+	LatestFeedRequest:   NextFeed,
+	NewFeedRequest:      NewFeed,
+	UpdateFeedRequest:   UpdateFeed,
+	NewDiaperRequest:    NewDiaper,
+	ListDiapersRequest:  ListDiapers,
+	ListFeedsRequest:    ListFeeds,
+	RemoveDiaperRequest: RemoveDiaperRecord,
+	RemoveFeedRequest:   RemoveFeedRecord,
+	// RemoveAccountRequest:     {},
+	// RemoveNumberRequest:      {},
+}
 
 type Config struct {
 	FeedingTableName string
@@ -81,7 +103,6 @@ type dynamodber interface {
 type BabyLogger struct {
 	config   *Config
 	dynamodb dynamodber
-	userid   int64
 }
 
 type Response struct {
@@ -115,13 +136,24 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 		}
 		var r []returns
 
-		err = b.userLookup(req.QueryStringParameters["From"])
-		if err != nil || b.userid == 0 {
+		opts := &options{
+			db:     b.dynamodb,
+			config: b.config,
+		}
+
+		if pn, ok := req.QueryStringParameters["From"]; ok {
+			opts.phoneNumber = pn
+		} else {
+			break
+		}
+		userID, err := userLookup(opts)
+		if err != nil || userID == 0 {
 			var respMessage string
 			var err error
-			message := strings.ToLower(commands[0])
-			if strings.HasPrefix(message, AddAccount) {
-				respMessage, err = b.AddAccount(message)
+			opts.message = strings.ToLower(commands[0])
+
+			if strings.HasPrefix(opts.message, AddAccountRequest) {
+				respMessage, err = AddAccount(opts)
 			} else {
 				xmlResp := "No account found for number\nTo create, send \"add account\""
 				resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
@@ -141,25 +173,22 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 			for _, command := range commands {
 				var respMessage string
 				var err error
-				message := strings.ToLower(command)
-				if strings.HasPrefix(message, LatestFeedRequest) {
-					respMessage, err = b.NextFeed(message)
-				} else if strings.HasPrefix(message, NewFeedRequest) {
-					respMessage, err = b.NewFeed(message)
-				} else if strings.HasPrefix(message, UpdateFeedRequest) {
-					respMessage, err = b.UpdateFeed(message)
-				} else if strings.HasPrefix(message, NewDiaperRequest) {
-					respMessage, err = b.NewDiaper(message)
-				} else if strings.HasPrefix(message, ListFeeds) {
-					respMessage, err = b.ListFeeds(message)
-				} else if strings.HasPrefix(message, ListDiapers) {
-					respMessage, err = b.ListDiapers(message)
-				} else if strings.HasPrefix(message, RemoveDiaper) {
-					respMessage, err = b.RemoveRecord(message, b.config.DiaperTableName)
-				} else if strings.HasPrefix(message, RemoveFeed) {
-					respMessage, err = b.RemoveRecord(message, b.config.FeedingTableName)
+				opts.message = strings.ToLower(command)
+				opts.userID = userID
+
+				prefixes := strings.SplitN(opts.message, " ", 3)
+				if len(prefixes) < 2 {
+					r = append(r, returns{respMessage: "", err: fmt.Errorf("invalid command")})
+					break
 				}
-				r = append(r, returns{respMessage: respMessage, err: err})
+				prefix := fmt.Sprintf("%s %s", prefixes[0], prefixes[1])
+				if f, exists := Routes[prefix]; exists {
+					respMessage, err = f(opts)
+					r = append(r, returns{respMessage: respMessage, err: err})
+				} else {
+					r = append(r, returns{respMessage: "", err: fmt.Errorf("invalid command")})
+					break
+				}
 			}
 		}
 
@@ -213,7 +242,16 @@ func (b *BabyLogger) Router(req events.APIGatewayProxyRequest) (events.APIGatewa
 			},
 		}, nil
 	}
-	xmlResp.Message = fmt.Sprintf("List of available commands:\n%s\n%s\n%s\n%s\n%s\n%s", LatestFeedRequest, NewFeedRequest, UpdateFeedRequest, NewDiaperRequest, ListFeeds, ListDiapers)
+	xmlResp.Message = fmt.Sprintf("List of available commands:\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s",
+		LatestFeedRequest,
+		NewFeedRequest,
+		UpdateFeedRequest,
+		NewDiaperRequest,
+		ListFeedsRequest,
+		ListDiapersRequest,
+		RemoveFeedRequest,
+		RemoveDiaperRequest,
+	)
 
 	resp, err := xml.MarshalIndent(xmlResp, " ", "  ")
 	if err != nil {
@@ -282,17 +320,17 @@ type IDRecord struct {
 	Count int64 `json:"count"`
 }
 
-func (b *BabyLogger) userLookup(phoneNumber string) error {
+func userLookup(opts *options) (int64, error) {
 	builder := expression.NewBuilder()
-	key := expression.Key("number").Equal(expression.Value(phoneNumber))
+	key := expression.Key("number").Equal(expression.Value(opts.phoneNumber))
 	proj := expression.NamesList(expression.Name("id"))
 	expr, err := builder.WithKeyCondition(key).WithProjection(proj).Build()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	qi := &dynamodb.QueryInput{
-		TableName:                 aws.String(b.config.UserTableName),
+		TableName:                 aws.String(opts.config.UserTableName),
 		Limit:                     aws.Int64(1),
 		ScanIndexForward:          aws.Bool(false),
 		ExpressionAttributeNames:  expr.Names(),
@@ -301,26 +339,25 @@ func (b *BabyLogger) userLookup(phoneNumber string) error {
 		KeyConditionExpression:    expr.KeyCondition(),
 	}
 
-	o, err := b.dynamodb.Query(qi)
+	o, err := opts.db.Query(qi)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	log.WithField("output", o.String()).Info("dynamodb query succeeded")
 
 	if len(o.Items) != 1 {
-		return err
+		return 0, err
 	}
 	var ur UserRecord
 	err = dynamodbattribute.UnmarshalMap(o.Items[0], &ur)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	b.userid = ur.UserID
-	return nil
+	return ur.UserID, nil
 }
 
-func (b *BabyLogger) AddAccount(phoneNumber string) (string, error) {
+func AddAccount(opts *options) (string, error) {
 	builder := expression.NewBuilder().
 		WithUpdate(expression.Add(expression.Name("count"), expression.Value(1)))
 	expr, err := builder.Build()
@@ -329,7 +366,7 @@ func (b *BabyLogger) AddAccount(phoneNumber string) (string, error) {
 	}
 
 	uii := &dynamodb.UpdateItemInput{
-		TableName: aws.String(b.config.IDTableName),
+		TableName: aws.String(opts.config.IDTableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
 				N: aws.String("userid"),
@@ -341,7 +378,7 @@ func (b *BabyLogger) AddAccount(phoneNumber string) (string, error) {
 		UpdateExpression:          expr.Update(),
 	}
 
-	uo, err := b.dynamodb.UpdateItem(uii)
+	uo, err := opts.db.UpdateItem(uii)
 	if err != nil {
 		return "", err
 	}
@@ -354,10 +391,10 @@ func (b *BabyLogger) AddAccount(phoneNumber string) (string, error) {
 	}
 
 	pii := &dynamodb.PutItemInput{
-		TableName: aws.String(b.config.FeedingTableName),
+		TableName: aws.String(opts.config.UserTableName),
 		Item: map[string]*dynamodb.AttributeValue{
 			"number": {
-				N: aws.String(phoneNumber),
+				N: aws.String(opts.phoneNumber),
 			},
 			"id": {
 				N: aws.String(strconv.FormatInt(ir.Count, 10)),
@@ -365,7 +402,7 @@ func (b *BabyLogger) AddAccount(phoneNumber string) (string, error) {
 		},
 	}
 
-	po, err := b.dynamodb.PutItem(pii)
+	po, err := opts.db.PutItem(pii)
 	if err != nil {
 		return "", err
 	}
@@ -451,25 +488,25 @@ func getLast(tableName string, db dynamodber, userid int64, skipBottle bool) (*F
 }
 
 // NextFeed - Gets the latest feeding and responds with expected next feeding and which side
-func (b *BabyLogger) NextFeed(message string) (string, error) {
-	fr, err := getLast(b.config.FeedingTableName, b.dynamodb, b.userid, true)
+func NextFeed(opts *options) (string, error) {
+	fr, err := getLast(opts.config.FeedingTableName, opts.db, opts.userID, true)
 	if err != nil {
 		return "", err
 	}
 
 	var timeInterval time.Duration
 	intervalRE := regexp.MustCompile(`.*(?P<interval>\d+h).*`)
-	intervalMatch := intervalRE.FindStringSubmatch(message)
+	intervalMatch := intervalRE.FindStringSubmatch(opts.message)
 	intervalIndex := intervalRE.SubexpIndex("interval")
 	if len(intervalMatch) > 0 {
 		timeInterval, _ = time.ParseDuration(intervalMatch[intervalIndex])
 	}
 	if timeInterval.Hours() == 0 {
-		timeInterval = b.config.FeedingInterval
+		timeInterval = opts.config.FeedingInterval
 	}
 
 	countRE := regexp.MustCompile(`.*(?P<count>\d+)(\s+|$)`)
-	countMatch := countRE.FindStringSubmatch(message)
+	countMatch := countRE.FindStringSubmatch(opts.message)
 	countIndex := countRE.SubexpIndex("count")
 	var count int64
 	if len(countMatch) > 0 {
@@ -558,8 +595,8 @@ func getAllForDay(tableName string, db dynamodber, userid int64, dt *Datetime, p
 	return nil
 }
 
-func (b *BabyLogger) ListFeeds(message string) (string, error) {
-	dt, err := getTimestamp(message)
+func ListFeeds(opts *options) (string, error) {
+	dt, err := getTimestamp(opts.message)
 	if err != nil {
 		return "", err
 	}
@@ -571,7 +608,7 @@ func (b *BabyLogger) ListFeeds(message string) (string, error) {
 		expression.Name("right"),
 		expression.Name("bottle"))
 	ffr := make([]FullFeedingRecord, 0)
-	err = getAllForDay(b.config.FeedingTableName, b.dynamodb, b.userid, dt, proj, &ffr)
+	err = getAllForDay(opts.config.FeedingTableName, opts.db, opts.userID, dt, proj, &ffr)
 	if err != nil {
 		return "", err
 	}
@@ -597,15 +634,15 @@ func (b *BabyLogger) ListFeeds(message string) (string, error) {
 	return respMessage, nil
 }
 
-func (b *BabyLogger) ListDiapers(message string) (string, error) {
-	dt, err := getTimestamp(message)
+func ListDiapers(opts *options) (string, error) {
+	dt, err := getTimestamp(opts.message)
 	if err != nil {
 		return "", err
 	}
 
 	proj := expression.NamesList(expression.Name("timestamp"), expression.Name("wet"), expression.Name("soiled"))
 	fdr := make([]FullDiaperRecord, 0)
-	err = getAllForDay(b.config.DiaperTableName, b.dynamodb, b.userid, dt, proj, &fdr)
+	err = getAllForDay(opts.config.DiaperTableName, opts.db, opts.userID, dt, proj, &fdr)
 	if err != nil {
 		return "", err
 	}
@@ -630,22 +667,22 @@ func (b *BabyLogger) ListDiapers(message string) (string, error) {
 	return respMessage, nil
 }
 
-func (b *BabyLogger) NewFeed(message string) (string, error) {
-	re := regexp.MustCompile(`^feed (?P<side>[A-Za-z]+).*`)
-	match := re.FindStringSubmatch(message)
+func NewFeed(opts *options) (string, error) {
+	re := regexp.MustCompile(`^new feed (?P<side>[A-Za-z]+).*`)
+	match := re.FindStringSubmatch(opts.message)
 	index := re.SubexpIndex("side")
 	side := match[index]
 	if side != LeftSide && side != RightSide && side != BottleSide {
 		return "", fmt.Errorf("Invalid side specified")
 	}
 
-	dt, err := getTimestamp(message)
+	dt, err := getTimestamp(opts.message)
 	if err != nil {
 		return "", nil
 	}
 
 	leftRE := regexp.MustCompile(`.*left (?P<left>\d+)(\s+|$).*`)
-	leftMatch := leftRE.FindStringSubmatch(message)
+	leftMatch := leftRE.FindStringSubmatch(opts.message)
 	leftIndex := leftRE.SubexpIndex("left")
 	var left string
 	if len(leftMatch) > 0 {
@@ -653,7 +690,7 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 	}
 
 	rightRE := regexp.MustCompile(`.*right (?P<right>\d+)(\s+|$).*`)
-	rightMatch := rightRE.FindStringSubmatch(message)
+	rightMatch := rightRE.FindStringSubmatch(opts.message)
 	rightIndex := rightRE.SubexpIndex("right")
 	var right string
 	if len(rightMatch) > 0 {
@@ -661,7 +698,7 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 	}
 
 	bottleRE := regexp.MustCompile(`.*bottle (?P<bottle>\d*\.{0,1}\d{0,2})(\s+|$).*`)
-	bottleMatch := bottleRE.FindStringSubmatch(message)
+	bottleMatch := bottleRE.FindStringSubmatch(opts.message)
 	bottleIndex := bottleRE.SubexpIndex("bottle")
 	var bottle string
 	if len(bottleMatch) > 0 {
@@ -669,11 +706,11 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 	}
 
 	i := &dynamodb.PutItemInput{
-		TableName: aws.String(b.config.FeedingTableName),
+		TableName: aws.String(opts.config.FeedingTableName),
 		Item: map[string]*dynamodb.AttributeValue{
 			"userid": {
 
-				N: aws.String(strconv.FormatInt(b.userid, 10)),
+				N: aws.String(strconv.FormatInt(opts.userID, 10)),
 			},
 			"timestamp": {
 				N: aws.String(strconv.FormatInt(dt.timestamp, 10)),
@@ -692,7 +729,7 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 	if bottle != "" {
 		i.Item["bottle"] = &dynamodb.AttributeValue{N: aws.String(bottle)}
 	}
-	o, err := b.dynamodb.PutItem(i)
+	o, err := opts.db.PutItem(i)
 	if err != nil {
 		return "", nil
 	}
@@ -714,12 +751,12 @@ func (b *BabyLogger) NewFeed(message string) (string, error) {
 	return respMessage, nil
 }
 
-func (b *BabyLogger) UpdateFeed(message string) (string, error) {
-	re := regexp.MustCompile(`^update last.*`)
-	match := re.FindStringSubmatch(message)
+func UpdateFeed(opts *options) (string, error) {
+	re := regexp.MustCompile(`^update feed last.*`)
+	match := re.FindStringSubmatch(opts.message)
 	var dt *Datetime
 	if len(match) != 0 {
-		fr, err := getLast(b.config.FeedingTableName, b.dynamodb, b.userid, false)
+		fr, err := getLast(opts.config.FeedingTableName, opts.db, opts.userID, false)
 		if err != nil {
 			return "", err
 		}
@@ -733,7 +770,7 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 		dt.loc = loc
 	} else {
 		var err error
-		dt, err = getTimestamp(message)
+		dt, err = getTimestamp(opts.message)
 		if err != nil {
 			return "", err
 		}
@@ -744,7 +781,7 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 	var update expression.UpdateBuilder
 
 	leftRE := regexp.MustCompile(`.*left (?P<set>(set|add|sub)){0,1}\s*(?P<left>\d+)(\s+|$).*`)
-	leftMatch := leftRE.FindStringSubmatch(message)
+	leftMatch := leftRE.FindStringSubmatch(opts.message)
 	leftSetIndex := leftRE.SubexpIndex("set")
 	leftIndex := leftRE.SubexpIndex("left")
 	var left string
@@ -766,7 +803,7 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 	}
 
 	rightRE := regexp.MustCompile(`.*right (?P<set>(set|add|sub)){0,1}\s*(?P<right>\d+)(\s+|$).*`)
-	rightMatch := rightRE.FindStringSubmatch(message)
+	rightMatch := rightRE.FindStringSubmatch(opts.message)
 	rightSetIndex := rightRE.SubexpIndex("set")
 	rightIndex := rightRE.SubexpIndex("right")
 	var right string
@@ -787,7 +824,7 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 	}
 
 	bottleRE := regexp.MustCompile(`.*bottle (?P<set>(set|add|sub)){0,1}\s*(?P<bottle>\d*\.{0,1}\d{0,2})(\s+|$).*`)
-	bottleMatch := bottleRE.FindStringSubmatch(message)
+	bottleMatch := bottleRE.FindStringSubmatch(opts.message)
 	bottleSetIndex := bottleRE.SubexpIndex("set")
 	bottleIndex := bottleRE.SubexpIndex("bottle")
 	var bottle string
@@ -818,10 +855,10 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 	}
 
 	i := &dynamodb.UpdateItemInput{
-		TableName: aws.String(b.config.FeedingTableName),
+		TableName: aws.String(opts.config.FeedingTableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"userid": {
-				N: aws.String(strconv.FormatInt(b.userid, 10)),
+				N: aws.String(strconv.FormatInt(opts.userID, 10)),
 			},
 			"timestamp": {
 				N: aws.String(strconv.FormatInt(dt.timestamp, 10)),
@@ -834,7 +871,7 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 		UpdateExpression:          expr.Update(),
 	}
 
-	o, err := b.dynamodb.UpdateItem(i)
+	o, err := opts.db.UpdateItem(i)
 	if err != nil {
 		return "", err
 	}
@@ -850,22 +887,22 @@ func (b *BabyLogger) UpdateFeed(message string) (string, error) {
 	return respMessage, nil
 }
 
-func (b *BabyLogger) NewDiaper(message string) (string, error) {
-	dt, err := getTimestamp(message)
+func NewDiaper(opts *options) (string, error) {
+	dt, err := getTimestamp(opts.message)
 	if err != nil {
 		return "", err
 	}
 
 	var wet, soiled bool
-	if strings.Contains(message, "wet") {
+	if strings.Contains(opts.message, "wet") {
 		wet = true
 	}
-	if strings.Contains(message, "soiled") {
+	if strings.Contains(opts.message, "soiled") {
 		soiled = true
 	}
 
 	checkedRE := regexp.MustCompile(`.*checked (?P<checked>[A-Za-z]+-{0,1}[A-Za-z]*){0,1}.*`)
-	checkedMatch := checkedRE.FindStringSubmatch(message)
+	checkedMatch := checkedRE.FindStringSubmatch(opts.message)
 	checkedIndex := checkedRE.SubexpIndex("checked")
 	var checked string
 	if len(checkedMatch) > 0 {
@@ -873,10 +910,10 @@ func (b *BabyLogger) NewDiaper(message string) (string, error) {
 	}
 
 	i := &dynamodb.PutItemInput{
-		TableName: aws.String(b.config.DiaperTableName),
+		TableName: aws.String(opts.config.DiaperTableName),
 		Item: map[string]*dynamodb.AttributeValue{
 			"userid": {
-				N: aws.String(strconv.FormatInt(b.userid, 10)),
+				N: aws.String(strconv.FormatInt(opts.userID, 10)),
 			},
 			"timestamp": {
 				N: aws.String(strconv.FormatInt(dt.timestamp, 10)),
@@ -892,11 +929,11 @@ func (b *BabyLogger) NewDiaper(message string) (string, error) {
 	if checked != "" {
 		i.Item["checked"] = &dynamodb.AttributeValue{S: aws.String(checked)}
 	}
-	o, err := b.dynamodb.PutItem(i)
+	out, err := opts.db.PutItem(i)
 	if err != nil {
 		return "", err
 	}
-	log.WithField("output", o).Info("dynamodb put succeeded")
+	log.WithField("output", out).Info("dynamodb put succeeded")
 
 	var respMessage string
 	if dt.twentyFourHourTime {
@@ -908,17 +945,24 @@ func (b *BabyLogger) NewDiaper(message string) (string, error) {
 	return respMessage, nil
 }
 
-func (b *BabyLogger) RemoveRecord(message string, table string) (string, error) {
+func RemoveFeedRecord(opts *options) (string, error) {
+	return removeRecord(opts.message, opts.config.FeedingTableName, opts.userID, opts.db)
+}
+func RemoveDiaperRecord(opts *options) (string, error) {
+	return removeRecord(opts.message, opts.config.DiaperTableName, opts.userID, opts.db)
+}
+
+func removeRecord(message, tableName string, userID int64, db dynamodber) (string, error) {
 	dt, err := getTimestamp(message)
 	if err != nil {
 		return "", err
 	}
 
 	i := &dynamodb.DeleteItemInput{
-		TableName: aws.String(table),
+		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"userid": {
-				N: aws.String(strconv.FormatInt(b.userid, 10)),
+				N: aws.String(strconv.FormatInt(userID, 10)),
 			},
 			"timestamp": {
 				N: aws.String(strconv.FormatInt(dt.timestamp, 10)),
@@ -927,7 +971,7 @@ func (b *BabyLogger) RemoveRecord(message string, table string) (string, error) 
 		ReturnValues: aws.String("All_OLD"),
 	}
 
-	o, err := b.dynamodb.DeleteItem(i)
+	o, err := db.DeleteItem(i)
 	if err != nil || o.Attributes == nil {
 		return "", err
 	}
