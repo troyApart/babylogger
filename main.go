@@ -369,7 +369,7 @@ func AddAccount(opts *options) (string, error) {
 		TableName: aws.String(opts.config.IDTableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				N: aws.String("userid"),
+				S: aws.String("userid"),
 			},
 		},
 		ExpressionAttributeValues: expr.Values(),
@@ -394,7 +394,7 @@ func AddAccount(opts *options) (string, error) {
 		TableName: aws.String(opts.config.UserTableName),
 		Item: map[string]*dynamodb.AttributeValue{
 			"number": {
-				N: aws.String(opts.phoneNumber),
+				S: aws.String(opts.phoneNumber),
 			},
 			"id": {
 				N: aws.String(strconv.FormatInt(ir.Count, 10)),
